@@ -1,0 +1,17 @@
+{
+  "server_host": "192.168.31.87",
+  "server_port": "888",
+  "path": "/websocket",
+  "scheme": "ws",
+  "token": "",
+  "require_auth": false,
+  "version": "1.0.0",
+  "user_agent": "FCGameServer-WebSocket-Client/1.0.0",
+  "origin": "http://localhost",
+  "subprotocols": [],
+  "timeout": 10000000000,
+  "heartbeat": 30000000000,
+  "reconnect": true,
+  "max_reconnect": 10,
+  "reconnect_wait": 5000000000
+}

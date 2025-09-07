@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -30,6 +29,7 @@ import (
 // AccountInfo 账户信息结构
 type AccountInfo struct {
 	Name        string `json:"name"`
+	SortName    string `json:"sort_name"`
 	Platform    string `json:"platform"`
 	Version     int    `json:"version"`
 	FullVersion string `json:"full_version"`
@@ -44,7 +44,8 @@ type AccountInfo struct {
 
 // DatabaseConfig 数据库配置
 type DatabaseConfig struct {
-	MaxMessageDBCount int `json:"max_message_db_count"` // 最大处理的message数据库数量
+	MaxMessageDBCount int   `json:"max_message_db_count"` // 最大处理的message数据库数量
+	MinCreateTime     int64 `json:"min_create_time"`      // 最小创建时间戳，只查询大于此时间的消息
 }
 
 // FileState 文件状态跟踪
@@ -62,20 +63,12 @@ type DatabaseState struct {
 	FileStates      map[string]FileState `json:"file_states"`       // 文件路径 -> 文件状态
 }
 
-// MemoryDatabase 内存数据库结构
-type MemoryDatabase struct {
-	DB   *sql.DB
-	Path string
-	Type string // "contact" 或 "message"
-}
-
 // DataProcessor 数据处理器
 type DataProcessor struct {
 	mutex       sync.Mutex
 	accounts    []AccountInfo
 	dbConfig    DatabaseConfig
 	dbState     DatabaseState
-	memoryDBs   map[string]*MemoryDatabase // 文件路径 -> 内存数据库
 	wsClient    *webscokets.WebSocketClient
 	processLock sync.Mutex // 防止重复处理的锁
 }
@@ -156,9 +149,9 @@ func runDebugMode() {
 
 	// 初始化全局数据处理器
 	globalProcessor = &DataProcessor{
-		memoryDBs: make(map[string]*MemoryDatabase),
 		dbConfig: DatabaseConfig{
-			MaxMessageDBCount: 3, // 默认处理最新的3个数据库
+			MaxMessageDBCount: 20,         // 默认处理最新的3个数据库
+			MinCreateTime:     1735660800, // 默认最小时间戳（可在配置文件中修改）
 		},
 		dbState: DatabaseState{
 			ContactLastID:   0,
@@ -174,6 +167,7 @@ func runDebugMode() {
 	// 尝试连接WebSocket服务器
 	if err := globalProcessor.wsClient.ConnectWithRetry(); err != nil {
 		logger.Warn("WebSocket连接失败", zap.Error(err))
+		return
 	} else {
 		logger.Info("WebSocket连接建立成功")
 		// 启动消息监听
@@ -193,7 +187,6 @@ func runDebugMode() {
 		logger.Info("未找到缓存的账户信息，开始获取")
 		accounts = getAndSaveAccounts(rb)
 	}
-
 	if len(accounts) == 0 {
 		logger.Error("未找到任何可用的微信账户")
 		return
@@ -211,6 +204,9 @@ func runDebugMode() {
 
 	// 立即执行一次处理
 	for _, account := range accounts {
+		if idx := strings.LastIndex(account.Name, "_"); idx != -1 {
+			account.SortName = account.Name[:idx]
+		}
 		processAccountData(account)
 	}
 
@@ -379,35 +375,49 @@ func processAccountData(account AccountInfo) {
 		processContactDatabase(decryptor, contactFiles[0], account)
 	}
 
-	// 处理 message_x.db 文件（只处理最新的几个）
-	latestMessageFiles := getLatestMessageFiles(messageFiles, globalProcessor.dbConfig.MaxMessageDBCount)
-	for _, file := range latestMessageFiles {
-		processMessageDatabase(decryptor, file, account)
-	}
+	// 处理消息数据库文件
+	if len(messageFiles) > 0 {
+		// 检查是否是第一次处理（没有任何文件状态记录）
+		isFirstRun := isFirstTimeProcessing(messageFiles)
 
-	// 清理内存数据库，防止内存溢出
-	cleanupMemoryDatabases()
+		if isFirstRun {
+			// 第一次运行：处理所有 message 文件
+			logger.Info("第一次运行，处理所有消息文件", zap.Int("file_count", len(messageFiles)))
+			for _, file := range messageFiles {
+				processMessageDatabase(decryptor, file, account)
+			}
+		} else {
+			// 后续运行：只处理最新的几个文件
+			latestMessageFiles := getLatestMessageFiles(messageFiles, globalProcessor.dbConfig.MaxMessageDBCount)
+			logger.Info("后续运行，处理最新文件", zap.Int("file_count", len(latestMessageFiles)))
+			for _, file := range latestMessageFiles {
+				processMessageDatabase(decryptor, file, account)
+			}
+		}
+	}
 
 	logger.Info("账户处理完成", zap.String("account", account.Name))
 }
 
-// cleanupMemoryDatabases 清理内存数据库，防止内存溢出
-func cleanupMemoryDatabases() {
+// isFirstTimeProcessing 检查是否是第一次处理（没有任何文件状态记录）
+func isFirstTimeProcessing(messageFiles []string) bool {
 	globalProcessor.mutex.Lock()
 	defer globalProcessor.mutex.Unlock()
 
-	var closedCount int
-	for path, memDB := range globalProcessor.memoryDBs {
-		if memDB != nil && memDB.DB != nil {
-			memDB.DB.Close()
-			closedCount++
-		}
-		delete(globalProcessor.memoryDBs, path)
+	// 如果没有任何文件状态记录，说明是第一次运行
+	if len(globalProcessor.dbState.FileStates) == 0 {
+		return true
 	}
 
-	if closedCount > 0 {
-		logger.Debug("清理内存数据库", zap.Int("closed_count", closedCount))
+	// 检查是否有任何 message 文件在状态记录中
+	for _, file := range messageFiles {
+		if _, exists := globalProcessor.dbState.FileStates[file]; exists {
+			return false // 找到了记录，不是第一次
+		}
 	}
+
+	// 所有文件都没有记录，认为是第一次处理
+	return true
 }
 
 // getTargetDatabaseFiles 获取目标数据库文件
@@ -421,13 +431,15 @@ func getTargetDatabaseFiles(account AccountInfo) (contactFiles []string, message
 		messagePattern = `MSG([0-9]+)\.db$`
 	case account.Platform == "windows" && account.Version == 4:
 		contactPattern = `contact\.db$`
-		messagePattern = `message_([0-9]+)\.db$`
+		// 修改为精确匹配，确保文件名以message_开头，排除biz_message_x.db
+		messagePattern = `^message_([0-9]+)\.db$`
 	case account.Platform == "darwin" && account.Version == 3:
 		contactPattern = `wccontact_new2\.db$`
 		messagePattern = `msg_([0-9]+)\.db$`
 	case account.Platform == "darwin" && account.Version == 4:
 		contactPattern = `contact\.db$`
-		messagePattern = `message_([0-9]+)\.db$`
+		// 修改为精确匹配，确保文件名以message_开头，排除biz_message_x.db
+		messagePattern = `^message_([0-9]+)\.db$`
 	default:
 		logger.Error("不支持的平台或版本",
 			zap.String("platform", account.Platform),
@@ -495,22 +507,23 @@ func processContactDatabase(decryptor decrypt.Decryptor, dbFile string, account 
 
 	logger.Info("处理联系人数据库", zap.String("file", filepath.Base(dbFile)))
 
-	// 解密到内存
-	memoryDB, err := decryptToMemory(decryptor, dbFile, account.Key, "contact")
+	// 解密到临时文件
+	tempDBFile, err := decryptToTempFile(decryptor, dbFile, account.Key)
 	if err != nil {
 		logger.Error("解密联系人数据库失败", zap.Error(err))
 		return
 	}
-	// 在处理完成后立即释放内存数据库
+	// 确保删除临时文件
 	defer func() {
-		if memoryDB != nil && memoryDB.DB != nil {
-			memoryDB.DB.Close()
-			logger.Debug("释放联系人数据库内存")
+		if err := os.Remove(tempDBFile); err != nil {
+			logger.Warn("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
+		} else {
+			logger.Debug("临时文件已删除", zap.String("file", tempDBFile))
 		}
 	}()
 
 	// 读取并发送联系人数据
-	processContactData(memoryDB.DB, account)
+	processContactData(tempDBFile, account)
 
 	// 更新文件状态
 	updateFileState(dbFile)
@@ -526,22 +539,23 @@ func processMessageDatabase(decryptor decrypt.Decryptor, dbFile string, account 
 
 	logger.Info("处理消息数据库", zap.String("file", filepath.Base(dbFile)))
 
-	// 解密到内存
-	memoryDB, err := decryptToMemory(decryptor, dbFile, account.Key, "message")
+	// 解密到临时文件
+	tempDBFile, err := decryptToTempFile(decryptor, dbFile, account.Key)
 	if err != nil {
 		logger.Error("解密消息数据库失败", zap.Error(err))
 		return
 	}
-	// 在处理完成后立即释放内存数据库
+	// 确保删除临时文件
 	defer func() {
-		if memoryDB != nil && memoryDB.DB != nil {
-			memoryDB.DB.Close()
-			logger.Debug("释放消息数据库内存")
+		if err := os.Remove(tempDBFile); err != nil {
+			logger.Warn("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
+		} else {
+			logger.Debug("临时文件已删除", zap.String("file", tempDBFile))
 		}
 	}()
 
 	// 读取并发送消息数据
-	processMessageData(memoryDB.DB, account, dbFile)
+	processMessageData(tempDBFile, account, dbFile)
 
 	// 更新文件状态
 	updateFileState(dbFile)
@@ -592,43 +606,21 @@ func updateFileState(filePath string) {
 	}
 }
 
-// decryptToMemory 解密数据库到内存
-func decryptToMemory(decryptor decrypt.Decryptor, dbFile, key, dbType string) (*MemoryDatabase, error) {
-	// 检查是否已经存在在内存中
-	globalProcessor.mutex.Lock()
-	memDB, exists := globalProcessor.memoryDBs[dbFile]
-	globalProcessor.mutex.Unlock()
-
-	if exists {
-		// 检查文件是否需要更新
-		if !needsUpdate(dbFile) {
-			return memDB, nil
-		}
-		// 需要更新，关闭旧的数据库
-		memDB.DB.Close()
-	}
-
-	// 创建内存数据库
-	memoryDB, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		return nil, fmt.Errorf("创建内存数据库失败: %v", err)
-	}
-
+// decryptToTempFile 解密数据库到临时文件
+func decryptToTempFile(decryptor decrypt.Decryptor, dbFile, key string) (string, error) {
 	// 创建临时文件进行解密
 	tempFile, err := os.CreateTemp("", "chatlog_decrypt_*.db")
 	if err != nil {
-		memoryDB.Close()
-		return nil, fmt.Errorf("创建临时文件失败: %v", err)
+		return "", fmt.Errorf("创建临时文件失败: %v", err)
 	}
 	tempPath := tempFile.Name()
 	tempFile.Close()
-	defer os.Remove(tempPath) // 确保清理临时文件
 
 	// 解密到临时文件
 	outputFile, err := os.Create(tempPath)
 	if err != nil {
-		memoryDB.Close()
-		return nil, fmt.Errorf("创建输出文件失败: %v", err)
+		os.Remove(tempPath)
+		return "", fmt.Errorf("创建输出文件失败: %v", err)
 	}
 
 	ctx := context.Background()
@@ -641,77 +633,31 @@ func decryptToMemory(decryptor decrypt.Decryptor, dbFile, key, dbType string) (*
 			logger.Debug("文件已解密，直接复制", zap.String("file", filepath.Base(dbFile)))
 			data, readErr := os.ReadFile(dbFile)
 			if readErr != nil {
-				memoryDB.Close()
-				return nil, fmt.Errorf("读取文件失败: %v", readErr)
+				os.Remove(tempPath)
+				return "", fmt.Errorf("读取文件失败: %v", readErr)
 			}
 			if writeErr := os.WriteFile(tempPath, data, 0644); writeErr != nil {
-				memoryDB.Close()
-				return nil, fmt.Errorf("写入临时文件失败: %v", writeErr)
+				os.Remove(tempPath)
+				return "", fmt.Errorf("写入临时文件失败: %v", writeErr)
 			}
 		} else {
-			memoryDB.Close()
-			return nil, fmt.Errorf("解密失败: %v", err)
+			os.Remove(tempPath)
+			return "", fmt.Errorf("解密失败: %v", err)
 		}
 	}
 
-	// 附加临时数据库
-	_, err = memoryDB.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS temp_db;", tempPath))
-	if err != nil {
-		memoryDB.Close()
-		return nil, fmt.Errorf("附加数据库失败: %v", err)
-	}
+	logger.Debug("数据库解密到临时文件成功",
+		zap.String("source", filepath.Base(dbFile)),
+		zap.String("temp", filepath.Base(tempPath)))
 
-	// 获取所有表名
-	rows, err := memoryDB.Query("SELECT name FROM temp_db.sqlite_master WHERE type='table';")
-	if err != nil {
-		memoryDB.Close()
-		return nil, fmt.Errorf("获取表名失败: %v", err)
-	}
-
-	var tables []string
-	for rows.Next() {
-		var tableName string
-		if err := rows.Scan(&tableName); err != nil {
-			continue
-		}
-		tables = append(tables, tableName)
-	}
-	rows.Close()
-
-	// 复制所有表到内存数据库
-	for _, table := range tables {
-		_, err = memoryDB.Exec(fmt.Sprintf("CREATE TABLE %s AS SELECT * FROM temp_db.%s;", table, table))
-		if err != nil {
-			logger.Warn("复制表失败", zap.String("table", table), zap.Error(err))
-		}
-	}
-
-	// 分离临时数据库
-	_, err = memoryDB.Exec("DETACH DATABASE temp_db;")
-	if err != nil {
-		logger.Warn("分离数据库失败", zap.Error(err))
-	}
-
-	// 创建内存数据库对象（不再缓存，用后即释放）
-	memDB = &MemoryDatabase{
-		DB:   memoryDB,
-		Path: dbFile,
-		Type: dbType,
-	}
-
-	logger.Debug("数据库解密并加载到内存成功",
-		zap.String("file", filepath.Base(dbFile)),
-		zap.String("type", dbType),
-		zap.Int("tables", len(tables)))
-
-	return memDB, nil
+	return tempPath, nil
 }
 
 // 以下函数供 sendmsg.go 使用
-func processContactData(db *sql.DB, account AccountInfo) {
-	webscokets.ProcessContactData(db, account)
+func processContactData(tempDBFile string, account AccountInfo) {
+	webscokets.ProcessContactData(tempDBFile, account.SortName)
 }
 
-func processMessageData(db *sql.DB, account AccountInfo, dbFile string) {
-	webscokets.ProcessMessageData(db, account, dbFile)
+func processMessageData(tempDBFile string, account AccountInfo, dbFile string) {
+	webscokets.ProcessMessageData(tempDBFile, account.SortName, dbFile, globalProcessor.dbConfig.MinCreateTime)
 }

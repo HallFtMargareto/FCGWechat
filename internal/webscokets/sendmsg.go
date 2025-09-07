@@ -1,14 +1,17 @@
 package webscokets
 
 import (
-	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	//_ "github.com/mattn/go-sqlite3"
+	"database/sql"
+
 	"github.com/sjzar/chatlog/pkg/logger"
 	"go.uber.org/zap"
+	_ "modernc.org/sqlite" // 替换 import "github.com/mattn/go-sqlite3"
 )
 
 // 全局处理器接口
@@ -35,84 +38,120 @@ func SetGlobalProcessor(processor GlobalProcessor) {
 }
 
 // ProcessContactData 处理联系人数据
-func ProcessContactData(db *sql.DB, account interface{}) {
-	// 查询 SQL
-	query := `SELECT id, username, local_type, alias, remark, nick_name, pin_yin_initial, quan_pin, big_head_url, small_head_url FROM contact`
 
-	// 获取上次处理的最后 ID
-	lastID := getContactLastID()
-	if lastID > 0 {
-		query += fmt.Sprintf(" WHERE id > %d", lastID)
-	}
-	query += " ORDER BY id ASC"
-
-	// 执行查询
-	rows, err := db.Query(query)
+func ProcessContactData(tempDBFile string, account string) {
+	// 打开临时数据库文件
+	db, err := sql.Open("sqlite", tempDBFile)
 	if err != nil {
-		logger.Error("查询联系人数据失败", zap.Error(err))
+		logger.Error("打开临时数据库失败", zap.Error(err))
 		return
 	}
-	defer rows.Close()
+	defer db.Close()
 
-	var maxID int64
-	count := 0
+	// 分批处理联系人数据，每次最多500条
+	const batchSize = 500
+	totalCount := 0
 
-	// 遍历结果
-	for rows.Next() {
-		var contact FcgContact
-		var id int64
+	for {
+		// 获取上次处理的最后ID
+		lastID := getContactLastID()
 
-		err := rows.Scan(
-			&id,
-			&contact.Username,
-			&contact.LocalType,
-			&contact.Alias,
-			&contact.Remark,
-			&contact.NickName,
-			&contact.PinYinInitial,
-			&contact.QuanPin,
-			&contact.BigHeadUrl,
-			&contact.SmallHeadUrl,
-		)
+		// 查询 SQL - 添加 LIMIT 限制
+		query := `SELECT id, username, local_type, alias, remark, nick_name, pin_yin_initial, quan_pin, big_head_url, small_head_url FROM contact`
 
+		if lastID > 0 {
+			query += fmt.Sprintf(" WHERE id > %d", lastID)
+		}
+		query += fmt.Sprintf(" ORDER BY id ASC LIMIT %d", batchSize)
+
+		// 执行查询
+		rows, err := db.Query(query)
 		if err != nil {
-			logger.Error("扫描联系人数据失败", zap.Error(err))
-			continue
+			logger.Error("查询联系人数据失败", zap.Error(err))
+			return
 		}
 
-		// 设置 TenantId（可以根据实际情况调整）
-		contact.TenantId = 1
+		var maxID int64
+		batchCount := 0
 
-		// 通过 WebSocket 发送
-		if globalProcessor != nil {
-			wsClient := globalProcessor.GetWSClient()
-			if wsClient != nil && wsClient.IsConnected() {
-				err = wsClient.SendContact(contact)
-				if err != nil {
-					logger.Error("发送联系人数据失败", zap.Error(err))
-					continue
+		// 遍历结果
+		for rows.Next() {
+			var contact FcgContact
+			var id int64
+
+			err := rows.Scan(
+				&id,
+				&contact.Username,
+				&contact.LocalType,
+				&contact.Alias,
+				&contact.Remark,
+				&contact.NickName,
+				&contact.PinYinInitial,
+				&contact.QuanPin,
+				&contact.BigHeadUrl,
+				&contact.SmallHeadUrl,
+			)
+
+			if err != nil {
+				logger.Error("扫描联系人数据失败", zap.Error(err))
+				continue
+			}
+
+			// 设置 TenantId（可以根据实际情况调整）
+			contact.TenantId = 1
+			contact.Owner = account
+
+			// 通过 WebSocket 发送
+			if globalProcessor != nil {
+				wsClient := globalProcessor.GetWSClient()
+				if wsClient != nil && wsClient.IsConnected() {
+					err = wsClient.SendContact(contact)
+					if err != nil {
+						logger.Error("发送联系人数据失败", zap.Error(err))
+						continue
+					}
 				}
 			}
+
+			if id > maxID {
+				maxID = id
+			}
+			batchCount++
+		}
+		rows.Close()
+
+		// 更新最后处理的 ID
+		if maxID > lastID {
+			updateContactLastID(maxID)
 		}
 
-		if id > maxID {
-			maxID = id
+		totalCount += batchCount
+
+		// 如果这批数据不足batchSize，说明已经处理完所有数据
+		if batchCount < batchSize {
+			break
 		}
-		count++
+
+		logger.Debug("处理联系人数据批次完成",
+			zap.Int("batch_count", batchCount),
+			zap.Int64("max_id", maxID))
 	}
 
-	// 更新最后处理的 ID
-	if maxID > lastID {
-		updateContactLastID(maxID)
-	}
-
-	if count > 0 {
-		logger.Info("处理联系人数据完成", zap.Int("count", count))
+	if totalCount > 0 {
+		logger.Info("处理联系人数据完成", zap.Int("total_count", totalCount))
 	}
 }
 
 // ProcessMessageData 处理消息数据
-func ProcessMessageData(db *sql.DB, account interface{}, dbFile string) {
+func ProcessMessageData(tempDBFile string, account string, dbFile string, minCreateTime int64) {
+	// 打开临时数据库文件
+	db, err := sql.Open("sqlite", tempDBFile)
+	if err != nil {
+		logger.Error("打开临时数据库失败", zap.Error(err))
+		return
+	}
+	defer db.Close()
+
 	// 获取所有消息表
 	tables := getMessageTables(db)
 	if len(tables) == 0 {
@@ -124,14 +163,15 @@ func ProcessMessageData(db *sql.DB, account interface{}, dbFile string) {
 
 	// 处理每个消息表
 	for _, table := range tables {
-		count := processMessageTable(db, table, dbFile)
+		count := processMessageTable(db, table, dbFile, account, minCreateTime)
 		totalCount += count
 	}
 
 	if totalCount > 0 {
 		logger.Info("处理消息数据完成",
 			zap.String("dbFile", dbFile),
-			zap.Int("total_count", totalCount))
+			zap.Int("total_count", totalCount),
+			zap.Int64("min_create_time", minCreateTime))
 	}
 }
 
@@ -159,90 +199,133 @@ func getMessageTables(db *sql.DB) []string {
 }
 
 // processMessageTable 处理单个消息表
-func processMessageTable(db *sql.DB, tableName, dbFile string) int {
-	// 获取上次处理的最后 local_id
-	lastID := getMessageTableLastID(tableName)
+func processMessageTable(db *sql.DB, tableName, dbFile string, account string, minCreateTime int64) int {
+	// 分批处理消息数据，每次最多500条
+	const batchSize = 500
+	totalCount := 0
 
-	// 构建查询 SQL
-	query := fmt.Sprintf(`
-		SELECT n.user_name, m.local_id, m.sort_seq, m.server_id, m.local_type, 
-		       m.create_time, m.real_sender_id, m.message_content, m.status  
-		FROM %s m  
-		LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
-	`, tableName)
+	for {
+		// 获取上次处理的最后 local_id
+		lastID := getMessageTableLastID(tableName)
 
-	if lastID > 0 {
-		query += fmt.Sprintf(" WHERE m.local_id > %d", lastID)
-	}
-	query += " ORDER BY m.create_time ASC"
+		// 构建查询 SQL
+		query := fmt.Sprintf(`
+			SELECT n.user_name, m.local_id, m.sort_seq, m.server_id, m.local_type, 
+			       m.create_time, m.real_sender_id, m.message_content, m.status  
+			FROM %s m  
+			LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
+		`, tableName)
 
-	// 执行查询
-	rows, err := db.Query(query)
-	if err != nil {
-		logger.Error("查询消息表失败", zap.String("table", tableName), zap.Error(err))
-		return 0
-	}
-	defer rows.Close()
+		// 添加条件
+		var conditions []string
 
-	var maxLocalID int64
-	count := 0
+		// 添加 local_id 条件
+		if lastID > 0 {
+			conditions = append(conditions, fmt.Sprintf("m.local_id > %d", lastID))
+		}
 
-	// 遍历结果
-	for rows.Next() {
-		var message FcgMessage
-		var userName sql.NullString
+		// 添加 create_time 条件
+		if minCreateTime > 0 {
+			conditions = append(conditions, fmt.Sprintf("m.create_time > %d", minCreateTime))
+		}
 
-		err := rows.Scan(
-			&userName,
-			&message.LocalId,
-			&message.SortSeq,
-			&message.ServerId,
-			&message.LocalType,
-			&message.CreateTime,
-			&message.RealSenderId,
-			&message.MessageContent,
-			&message.Status,
-		)
+		// 组合条件
+		if len(conditions) > 0 {
+			query += " WHERE " + fmt.Sprintf("(%s)", strings.Join(conditions, " AND "))
+		}
 
+		query += fmt.Sprintf(" ORDER BY m.local_id ASC LIMIT %d", batchSize)
+
+		// 执行查询
+		rows, err := db.Query(query)
 		if err != nil {
-			logger.Error("扫描消息数据失败", zap.Error(err))
-			continue
+			logger.Error("查询消息表失败", zap.String("table", tableName), zap.Error(err))
+			return totalCount
 		}
 
-		// 设置默认值
-		message.TenantId = 1
-		if userName.Valid {
-			message.UserName = userName.String
-		}
-		message.NickName = message.UserName // 可以根据实际情况调整
-		message.RecognitionStatus = false
-		message.MessageNo = fmt.Sprintf("MSG_%d_%d", time.Now().UnixNano(), message.LocalId)
-		message.TaskList = ""
+		var maxLocalID int64
+		batchCount := 0
 
-		// 通过 WebSocket 发送
-		if globalProcessor != nil {
-			wsClient := globalProcessor.GetWSClient()
-			if wsClient != nil && wsClient.IsConnected() {
-				err = wsClient.SendFcgMessage(message)
-				if err != nil {
-					logger.Error("发送消息数据失败", zap.Error(err))
-					continue
+		// 遍历结果
+		for rows.Next() {
+			var message FcgMessage
+			var userName sql.NullString
+
+			err := rows.Scan(
+				&userName,
+				&message.LocalId,
+				&message.SortSeq,
+				&message.ServerId,
+				&message.LocalType,
+				&message.CreateTime,
+				&message.RealSenderId,
+				&message.MessageContent,
+				&message.Status,
+			)
+
+			if err != nil {
+				logger.Error("扫描消息数据失败", zap.Error(err))
+				continue
+			}
+
+			// 设置默认值
+			message.TenantId = 1
+			if userName.Valid {
+				message.UserName = userName.String
+			}
+			//message.NickName = message.UserName // 可以根据实际情况调整
+			message.RecognitionStatus = false
+			message.MessageNo = fmt.Sprintf("MSG_%d_%d", time.Now().UnixNano(), message.LocalId)
+			message.TaskList = ""
+			message.Owner = account
+			message.Hash = strings.TrimPrefix(tableName, "Msg_")
+
+			// 通过 WebSocket 发送
+			if globalProcessor != nil {
+				wsClient := globalProcessor.GetWSClient()
+				if wsClient != nil && wsClient.IsConnected() {
+					err = wsClient.SendFcgMessage(message)
+					if err != nil {
+						logger.Error("发送消息数据失败", zap.Error(err))
+						continue
+					}
 				}
 			}
+
+			if int64(message.LocalId) > maxLocalID {
+				maxLocalID = int64(message.LocalId)
+			}
+			batchCount++
+		}
+		rows.Close()
+
+		// 更新最后处理的 local_id
+		if maxLocalID > lastID {
+			updateMessageTableLastID(tableName, maxLocalID)
 		}
 
-		if int64(message.LocalId) > maxLocalID {
-			maxLocalID = int64(message.LocalId)
+		totalCount += batchCount
+
+		// 如果这批数据不足batchSize，说明已经处理完所有数据
+		if batchCount < batchSize {
+			break
 		}
-		count++
+
+		logger.Debug("处理消息表批次完成",
+			zap.String("table", tableName),
+			zap.Int("batch_count", batchCount),
+			zap.Int64("max_local_id", maxLocalID),
+			zap.Int64("min_create_time", minCreateTime))
 	}
 
-	// 更新最后处理的 local_id
-	if maxLocalID > lastID {
-		updateMessageTableLastID(tableName, maxLocalID)
+	if totalCount > 0 {
+		logger.Debug("处理消息表完成",
+			zap.String("table", tableName),
+			zap.Int("total_count", totalCount),
+			zap.Int64("min_create_time", minCreateTime))
 	}
 
-	return count
+	return totalCount
 }
 
 // 状态管理函数

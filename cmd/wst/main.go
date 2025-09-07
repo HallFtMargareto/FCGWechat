@@ -1,4 +1,4 @@
-package webscokets
+package main
 
 import (
 	"bufio"
@@ -120,7 +120,6 @@ type FcgContact struct {
 	Remark        string `json:"remark"`
 	Description   string `json:"description"`
 	Hash          string `json:"hash"`
-	Owner         string `json:"ownen"`
 }
 
 // FcgMessage 消息结构体
@@ -139,8 +138,6 @@ type FcgMessage struct {
 	RecognitionStatus bool   `json:"recognition_status"`
 	MessageNo         string `json:"message_no"`
 	TaskList          string `json:"task_list"`
-	Owner             string `json:"ownen"`
-	Hash              string `json:"hash"`
 }
 
 type WebSocketClient struct {

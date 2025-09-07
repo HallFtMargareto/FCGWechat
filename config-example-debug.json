@@ -4,13 +4,18 @@
         "min_create_time": 1735660800
     },
     "websocket": {
-        "server_host": "localhost",
+        "server_host": "192.168.31.87",
         "server_port": "888",
         "path": "/websocket",
         "scheme": "ws",
         "require_auth": false,
+        "token": "",
         "reconnect": true,
-        "max_reconnect": 10,
         "heartbeat_interval": "30s"
+    },
+    "webhook": {
+        "enabled": false,
+        "url": "",
+        "timeout": "10s"
     }
 }
