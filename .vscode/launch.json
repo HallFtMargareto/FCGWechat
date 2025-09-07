@@ -29,10 +29,7 @@
                 "-debug=true",
             ],
             "cwd": "${workspaceFolder}",
-            "env": {
-                "CGO_ENABLED": "0", // 纯Go驱动应兼容
-                "SQLITE_DEBUG": "1" // 开启驱动内部日志
-            },
+            "env": {},
         },
     ]
 }
