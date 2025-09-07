@@ -192,13 +192,6 @@ func runDebugMode() {
 	if len(accounts) == 0 {
 		logger.Info("未找到缓存的账户信息，开始获取")
 		accounts = getAndSaveAccounts(rb)
-	} else {
-		logger.Info("成功读取缓存账户信息", zap.Int("count", len(accounts)))
-		// 检查缓存是否过期（24小时）
-		if time.Now().Unix()-accounts[0].SavedAt > 24*60*60 {
-			logger.Info("缓存已过期，重新获取账户信息")
-			accounts = getAndSaveAccounts(rb)
-		}
 	}
 
 	if len(accounts) == 0 {
@@ -283,26 +276,23 @@ func getAndSaveAccounts(rb *rbblot.RBblotCore) []AccountInfo {
 
 		// 刷新账户状态
 		if err := acc.RefreshStatus(); err != nil {
-			fmt.Printf("[警告] 刷新账户%s状态失败: %v\n", acc.Name, err)
+			logger.Info("[警告] 刷新账户%s状态失败: %v\n", zap.Error(err))
 			continue
 		}
 
 		// 只处理在线账户
 		if acc.Status != "online" {
-			fmt.Printf("[跳过] 账户%s不在线，状态: %s\n", acc.Name, acc.Status)
+			logger.Info("[跳过] 账户%s不在线，状态:", zap.Any("name", acc.Name), zap.Any("Status", acc.Status))
 			continue
 		}
 
 		// 获取密钥
-		fmt.Printf("[密钥] 正在获取账户%s的密钥...\n", acc.Name)
 		key, imgKey, err := acc.GetKey(ctx)
 		if err != nil {
-			fmt.Printf("[错误] 获取账户%s密钥失败: %v\n", acc.Name, err)
+			logger.Error("[错误] 获取账户密钥失败", zap.Any("name", acc.Name), zap.Error(err))
 			continue
 		}
 
-		fmt.Printf("[成功] 账户%s密钥获取成功\n", acc.Name)
-		fmt.Printf("  数据密钥: %s\n", key[:20]+"...") // 只显示前20个字符
 		if imgKey != "" {
 			fmt.Printf("  图片密钥: %s\n", imgKey[:20]+"...")
 		}
@@ -326,7 +316,7 @@ func getAndSaveAccounts(rb *rbblot.RBblotCore) []AccountInfo {
 	}
 
 	if len(accounts) == 0 {
-		fmt.Println("[错误] 未获取到任何有效账户信息")
+		logger.Info("未获取到任何有效账户信息")
 		return nil
 	}
 
