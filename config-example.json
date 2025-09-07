@@ -1,0 +1,15 @@
+{
+    "database": {
+        "max_message_db_count": 3
+    },
+    "websocket": {
+        "server_host": "localhost",
+        "server_port": "888",
+        "path": "/websocket",
+        "scheme": "ws",
+        "require_auth": false,
+        "reconnect": true,
+        "max_reconnect": 10,
+        "heartbeat_interval": "30s"
+    }
+}
