@@ -15,7 +15,6 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/sjzar/chatlog/cmd/chatlog"
 	"github.com/sjzar/chatlog/cmd/newdec"
 	"github.com/sjzar/chatlog/internal/webscokets"
 	"github.com/sjzar/chatlog/internal/wechat"
@@ -120,7 +119,7 @@ func main() {
 	logger.Info("程序启动")
 
 	// 解析命令行参数
-	debug := flag.Bool("debug", false, "启用debug模式，自动获取密钥并定期解密数据库")
+	// debug := flag.Bool("debug", false, "启用debug模式，自动获取密钥并定期解密数据库")
 	flag.Parse()
 
 	// 检查是否是newdec命令
@@ -129,14 +128,16 @@ func main() {
 		return
 	}
 
-	// 如果启用了debug模式
-	if *debug {
-		runDebugMode()
-		return
-	}
+	runDebugMode()
 
-	// 默认执行chatlog命令
-	chatlog.Execute()
+	// 如果启用了debug模式
+	// if *debug {
+	// 	runDebugMode()
+	// 	return
+	// }
+
+	// // 默认执行chatlog命令
+	// chatlog.Execute()
 }
 
 // runDebugMode debug模式主函数
@@ -203,9 +204,10 @@ func runDebugMode() {
 	logger.Info("找到账户，开始定期解密", zap.Int("account_count", len(accounts)))
 
 	// 立即执行一次处理
-	for _, account := range accounts {
+	for k, account := range accounts {
 		if idx := strings.LastIndex(account.Name, "_"); idx != -1 {
 			account.SortName = account.Name[:idx]
+			accounts[k].SortName = account.SortName
 		}
 		processAccountData(account)
 	}

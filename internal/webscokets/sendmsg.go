@@ -211,7 +211,7 @@ func processMessageTable(db *sql.DB, tableName, dbFile string, account string, m
 		// 构建查询 SQL
 		query := fmt.Sprintf(`
 			SELECT n.user_name, m.local_id, m.sort_seq, m.server_id, m.local_type, 
-			       m.create_time, m.real_sender_id, m.message_content, m.status  
+			       m.create_time, m.real_sender_id, m.message_content,m.packed_info_data, m.status
 			FROM %s m  
 			LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
 		`, tableName)
@@ -262,11 +262,6 @@ func processMessageTable(db *sql.DB, tableName, dbFile string, account string, m
 				&message.MessageContent,
 				&message.Status,
 			)
-
-			if err != nil {
-				logger.Error("扫描消息数据失败", zap.Error(err))
-				continue
-			}
 
 			// 设置默认值
 			message.TenantId = 1
