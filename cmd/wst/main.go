@@ -313,7 +313,7 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 		return fmt.Errorf("序列化消息失败: %v", err)
 	}
 
-	client.logger.Printf("📤 发送消息 [ID:%d]: %s", request.Id, string(msgBytes))
+	//client.logger.Printf("📤 发送消息 [ID:%d]: %s", request.Id, string(msgBytes))
 
 	// 设置发送超时
 	client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
@@ -330,13 +330,13 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 
 // 发送联系人数据
 func (client *WebSocketClient) SendContact(contact FcgContact) error {
-	client.logger.Printf("📬 发送联系人数据: %s (%s)", contact.Username, contact.NickName)
+	//client.logger.Printf("📬 发送联系人数据: %s (%s)", contact.Username, contact.NickName)
 	return client.SendMessage("/fccontact", contact)
 }
 
 // 发送消息数据
 func (client *WebSocketClient) SendFcgMessage(message FcgMessage) error {
-	client.logger.Printf("💬 发送消息数据: %s - %s", message.UserName, message.MessageContent)
+	//client.logger.Printf("💬 发送消息数据: %s - %s", message.UserName, message.MessageContent)
 	return client.SendMessage("/fcmessage", message)
 }
 
@@ -346,7 +346,7 @@ func (client *WebSocketClient) SendHeartbeat() error {
 		return fmt.Errorf("连接未建立")
 	}
 
-	client.logger.Println("💗 发送心跳")
+	//client.logger.Println("💗 发送心跳")
 	client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
 	err := client.conn.WriteMessage(websocket.PingMessage, []byte("ping"))
 	if err != nil {
@@ -390,7 +390,7 @@ func (client *WebSocketClient) ListenMessages() {
 
 		// 处理pong消息
 		if string(message) == "pong" {
-			client.logger.Println("💗 收到心跳响应: pong")
+			//client.logger.Println("💗 收到心跳响应: pong")
 			continue
 		}
 

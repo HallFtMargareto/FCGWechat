@@ -132,7 +132,7 @@ func ProcessContactData(tempDBFile string, account string) {
 			break
 		}
 
-		logger.Debug("处理联系人数据批次完成",
+		logger.Debug("process contact success.",
 			zap.Int("batch_count", batchCount),
 			zap.Int64("max_id", maxID))
 	}
@@ -204,17 +204,12 @@ func processMessageTable(db *sql.DB, tableName, dbFile string, account string, m
 	const batchSize = 500
 	totalCount := 0
 
+	lastID := getMessageTableLastID(tableName)
 	for {
 		// 获取上次处理的最后 local_id
-		lastID := getMessageTableLastID(tableName)
 
 		// 构建查询 SQL
-		query := fmt.Sprintf(`
-			SELECT n.user_name, m.local_id, m.sort_seq, m.server_id, m.local_type, 
-			       m.create_time, m.real_sender_id, m.message_content,m.packed_info_data, m.status
-			FROM %s m  
-			LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
-		`, tableName)
+		query := fmt.Sprintf(`SELECT n.user_name, m.local_id, m.sort_seq, m.server_id, m.local_type,m.create_time, m.real_sender_id, m.message_content, m.status FROM %s m LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid`, tableName)
 
 		// 添加条件
 		var conditions []string
@@ -243,7 +238,7 @@ func processMessageTable(db *sql.DB, tableName, dbFile string, account string, m
 			return totalCount
 		}
 
-		var maxLocalID int64
+		var maxLocalID uint64
 		batchCount := 0
 
 		// 遍历结果
@@ -284,19 +279,20 @@ func processMessageTable(db *sql.DB, tableName, dbFile string, account string, m
 						logger.Error("发送消息数据失败", zap.Error(err))
 						continue
 					}
+					maxLocalID = message.LocalId
+				} else {
+					logger.Error("发送消息数据失败,websocket已断开连接", zap.Error(err))
+					continue
 				}
-			}
-
-			if int64(message.LocalId) > maxLocalID {
-				maxLocalID = int64(message.LocalId)
 			}
 			batchCount++
 		}
 		rows.Close()
 
 		// 更新最后处理的 local_id
-		if maxLocalID > lastID {
-			updateMessageTableLastID(tableName, maxLocalID)
+		if maxLocalID > uint64(lastID) {
+			lastID = int64(maxLocalID)
+			updateMessageTableLastID(tableName, lastID)
 		}
 
 		totalCount += batchCount
@@ -306,15 +302,15 @@ func processMessageTable(db *sql.DB, tableName, dbFile string, account string, m
 			break
 		}
 
-		logger.Debug("处理消息表批次完成",
+		logger.Debug("precess message success",
 			zap.String("table", tableName),
 			zap.Int("batch_count", batchCount),
-			zap.Int64("max_local_id", maxLocalID),
+			zap.Uint64("max_local_id", maxLocalID),
 			zap.Int64("min_create_time", minCreateTime))
 	}
 
 	if totalCount > 0 {
-		logger.Debug("处理消息表完成",
+		logger.Debug("precess message tables finish",
 			zap.String("table", tableName),
 			zap.Int("total_count", totalCount),
 			zap.Int64("min_create_time", minCreateTime))

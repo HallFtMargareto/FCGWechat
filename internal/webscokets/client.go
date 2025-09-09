@@ -120,7 +120,7 @@ type FcgContact struct {
 	Remark        string `json:"remark"`
 	Description   string `json:"description"`
 	Hash          string `json:"hash"`
-	Owner         string `json:"ownen"`
+	Owner         string `json:"owner"`
 }
 
 // FcgMessage 消息结构体
@@ -139,7 +139,7 @@ type FcgMessage struct {
 	RecognitionStatus bool   `json:"recognition_status"`
 	MessageNo         string `json:"message_no"`
 	TaskList          string `json:"task_list"`
-	Owner             string `json:"ownen"`
+	Owner             string `json:"owner"`
 	Hash              string `json:"hash"`
 }
 
@@ -333,13 +333,13 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 
 // 发送联系人数据
 func (client *WebSocketClient) SendContact(contact FcgContact) error {
-	client.logger.Printf("📬 发送联系人数据: %s (%s)", contact.Username, contact.NickName)
+	// client.logger.Printf("📬 发送联系人数据: %s (%s)", contact.Username, contact.NickName)
 	return client.SendMessage("/fccontact", contact)
 }
 
 // 发送消息数据
 func (client *WebSocketClient) SendFcgMessage(message FcgMessage) error {
-	client.logger.Printf("💬 发送消息数据: %s - %s", message.UserName, message.MessageContent)
+	// client.logger.Printf("💬 发送消息数据: %s - %s", message.UserName, message.MessageContent)
 	return client.SendMessage("/fcmessage", message)
 }
 
@@ -393,7 +393,7 @@ func (client *WebSocketClient) ListenMessages() {
 
 		// 处理pong消息
 		if string(message) == "pong" {
-			client.logger.Println("💗 收到心跳响应: pong")
+			// client.logger.Println("💗 收到心跳响应: pong")
 			continue
 		}
 
@@ -401,9 +401,9 @@ func (client *WebSocketClient) ListenMessages() {
 		var response Response
 		err = json.Unmarshal(message, &response)
 		if err != nil {
-			client.logger.Printf("📥 收到原始消息: %s", string(message))
+			// client.logger.Printf("📥 收到原始消息: %s", string(message))
 		} else {
-			client.logger.Printf("📥 收到服务器响应 [ID:%d Code:%d]: %s", response.Id, response.Code, response.Msg)
+			// client.logger.Printf("📥 收到服务器响应 [ID:%d Code:%d]: %s", response.Id, response.Code, response.Msg)
 			if response.Data != nil {
 				dataBytes, _ := json.MarshalIndent(response.Data, "", "  ")
 				client.logger.Printf("   数据: %s", string(dataBytes))
