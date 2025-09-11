@@ -55,9 +55,6 @@ func (dp *DataProcessor) InitializeWebSocket() error {
 	go dp.wsClient.ListenMessages()
 	go dp.wsClient.StartHeartbeat()
 
-	// 设置全局处理器到 websockets 包
-	// webscokets.SetGlobalProcessor(dp)
-
 	return nil
 }
 

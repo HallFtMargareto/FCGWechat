@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/sjzar/chatlog/pkg/logger"
+	"go.uber.org/zap"
 )
-
-
 
 // GetDefaultConfig 获取默认配置
 func GetDefaultConfig() ClientConfig {
@@ -247,8 +247,14 @@ func (client *WebSocketClient) SendHeartbeat() error {
 // 监听服务器消息
 func (client *WebSocketClient) ListenMessages() {
 	defer func() {
-		if r := recover(); r != nil {
-			client.logger.Printf("❗ 消息监听出现panic: %v", r)
+		if recovered := recover(); recovered != nil {
+			var err error
+			if e, ok := recovered.(error); ok {
+				err = e
+			} else {
+				err = fmt.Errorf("unexpected panic: %v", recovered)
+			}
+			client.logger.Printf("❗ 消息监听出现panic: %v", err)
 		}
 		client.isConnected = false
 	}()
@@ -259,6 +265,8 @@ func (client *WebSocketClient) ListenMessages() {
 
 		_, message, err := client.conn.ReadMessage()
 		if err != nil {
+			logger.Error("❌ 读取消息错误: %v", zap.Error(err))
+
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				client.logger.Printf("❗ WebSocket意外关闭: %v", err)
 			} else if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
@@ -277,7 +285,6 @@ func (client *WebSocketClient) ListenMessages() {
 
 		// 处理pong消息
 		if string(message) == "pong" {
-			// client.logger.Println("💗 收到心跳响应: pong")
 			continue
 		}
 
@@ -285,12 +292,11 @@ func (client *WebSocketClient) ListenMessages() {
 		var response Response
 		err = json.Unmarshal(message, &response)
 		if err != nil {
-			// client.logger.Printf("📥 收到原始消息: %s", string(message))
+			logger.Error("parsing response message error: ", zap.Error(err))
 		} else {
-			// client.logger.Printf("📥 收到服务器响应 [ID:%d Code:%d]: %s", response.Id, response.Code, response.Msg)
 			if response.Data != nil {
 				dataBytes, _ := json.MarshalIndent(response.Data, "", "  ")
-				client.logger.Printf("   数据: %s", string(dataBytes))
+				client.logger.Printf("接收数据: %s", string(dataBytes))
 			}
 		}
 	}

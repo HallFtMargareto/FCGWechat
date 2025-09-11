@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/sjzar/chatlog/internal/webscokets"
+	"github.com/sjzar/chatlog/fcgame"
 	"github.com/sjzar/chatlog/pkg/logger"
 	"go.uber.org/zap"
 	_ "modernc.org/sqlite" // 替换 import "github.com/mattn/go-sqlite3"
@@ -41,7 +41,7 @@ func main() {
 
 	// 遍历结果
 	for rows.Next() {
-		var contact webscokets.FcgContact
+		var contact fcgame.FcgContact
 		var id int64
 
 		err := rows.Scan(
