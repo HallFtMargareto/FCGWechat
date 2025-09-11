@@ -26,7 +26,7 @@ func InitLogger() error {
 	}
 
 	// 创建日志文件路径
-	logFile := filepath.Join(logDir, "chatlog.log")
+	logFile := filepath.Join(logDir, "fcgame.log")
 
 	// 配置日志编码器
 	encoderConfig := zapcore.EncoderConfig{
@@ -49,20 +49,11 @@ func InitLogger() error {
 		return err
 	}
 
-	// 创建核心组件
-	core := zapcore.NewTee(
-		// 文件输出
-		zapcore.NewCore(
-			zapcore.NewJSONEncoder(encoderConfig),
-			zapcore.AddSync(fileWriter),
-			zapcore.DebugLevel,
-		),
-		// 控制台输出
-		zapcore.NewCore(
-			zapcore.NewConsoleEncoder(encoderConfig),
-			zapcore.AddSync(os.Stdout),
-			zapcore.InfoLevel,
-		),
+	// 创建核心组件 - 只输出到文件
+	core := zapcore.NewCore(
+		zapcore.NewJSONEncoder(encoderConfig),
+		zapcore.AddSync(fileWriter),
+		zapcore.DebugLevel,
 	)
 
 	// 创建日志记录器

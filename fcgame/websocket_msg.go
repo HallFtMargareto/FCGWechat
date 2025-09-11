@@ -1,9 +1,8 @@
-package webscokets
+package fcgame
 
 import (
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	//_ "github.com/mattn/go-sqlite3"
@@ -14,32 +13,9 @@ import (
 	_ "modernc.org/sqlite" // 替换 import "github.com/mattn/go-sqlite3"
 )
 
-// 全局处理器接口
-type GlobalProcessor interface {
-	GetMutex() *sync.Mutex
-	GetDBState() *DatabaseState
-	GetWSClient() *WebSocketClient
-	UpdateContactLastID(id int64)
-	UpdateMessageTableLastID(tableName string, localID int64)
-}
-
-// DatabaseState 数据库处理状态
-type DatabaseState struct {
-	ContactLastID   int64            `json:"contact_last_id"`
-	MessageTableMap map[string]int64 `json:"message_table_map"` // 表名 -> 最后处理的local_id
-}
-
-// 全局处理器实例
-var globalProcessor GlobalProcessor
-
-// SetGlobalProcessor 设置全局处理器
-func SetGlobalProcessor(processor GlobalProcessor) {
-	globalProcessor = processor
-}
-
 // ProcessContactData 处理联系人数据
 
-func ProcessContactData(tempDBFile string, account string) {
+func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) {
 	// 打开临时数据库文件
 	db, err := sql.Open("sqlite", tempDBFile)
 	if err != nil {
@@ -102,14 +78,11 @@ func ProcessContactData(tempDBFile string, account string) {
 			contact.Owner = account
 
 			// 通过 WebSocket 发送
-			if globalProcessor != nil {
-				wsClient := globalProcessor.GetWSClient()
-				if wsClient != nil && wsClient.IsConnected() {
-					err = wsClient.SendContact(contact)
-					if err != nil {
-						logger.Error("发送联系人数据失败", zap.Error(err))
-						continue
-					}
+			if dp.wsClient.IsConnected() {
+				err = dp.wsClient.SendContact(contact)
+				if err != nil {
+					logger.Error("发送联系人数据失败", zap.Error(err))
+					continue
 				}
 			}
 
@@ -143,7 +116,7 @@ func ProcessContactData(tempDBFile string, account string) {
 }
 
 // ProcessMessageData 处理消息数据
-func ProcessMessageData(tempDBFile string, account string, dbFile string, minCreateTime int64) {
+func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, dbFile string) {
 	// 打开临时数据库文件
 	db, err := sql.Open("sqlite", tempDBFile)
 	if err != nil {
@@ -369,4 +342,16 @@ func updateMessageTableLastID(tableName string, localID int64) {
 		return
 	}
 	globalProcessor.UpdateMessageTableLastID(tableName, localID)
+}
+
+func (dp *DataProcessor) UpdateContactLastID(id int64) {
+	dp.mutex.Lock()
+	defer dp.mutex.Unlock()
+	dp.dbState.ContactLastID = id
+}
+
+func (dp *DataProcessor) UpdateMessageTableLastID(tableName string, localID int64) {
+	dp.mutex.Lock()
+	defer dp.mutex.Unlock()
+	dp.dbState.MessageTableMap[tableName] = localID
 }
