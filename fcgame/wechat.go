@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -51,6 +52,19 @@ func (wm *WechatManager) LoadAccountsFromCache(rbblot interface{}) []AccountInfo
 
 // GetAndSaveAccounts 获取并保存账户信息
 func (wm *WechatManager) GetAndSaveAccounts(rbblot interface{}) []AccountInfo {
+	// 设置全局panic处理
+	defer func() {
+		if r := recover(); r != nil {
+			// 记录panic信息
+			Logger.Error("程序发生panic",
+				zap.Any("panic", r),
+				zap.String("stack", string(debug.Stack())))
+
+			// 同时打印到控制台，确保能看到错误信息
+			fmt.Fprintf(os.Stderr, "程序发生panic: %v\n%s\n", r, debug.Stack())
+		}
+	}()
+
 	// 加载微信实例
 	if err := wechat.Load(); err != nil {
 		Logger.Error("加载微信实例失败", zap.Error(err))

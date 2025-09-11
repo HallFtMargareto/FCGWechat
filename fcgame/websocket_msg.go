@@ -10,7 +10,7 @@ import (
 )
 
 // ProcessContactData 处理联系人数据
-func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) {
+func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) (err error) {
 	// 打开数据库连接
 	db, err := GetGormDB(tempDBFile)
 	if err != nil {
@@ -90,10 +90,13 @@ func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) {
 	}
 
 	if totalCount > 0 {
+		fmt.Println("发送新群聊数据  ", totalCount, " 条")
 		dp.logger.Debug("process contact batch success",
 			zap.Int("totalCount", totalCount),
 			zap.Int64("last_id", dp.dbState.ContactLastID))
 	}
+
+	return err
 }
 
 // ProcessMessageData 处理消息数据
@@ -127,34 +130,6 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 		count := dp.processMessageTableWithGORM(db, table, dbFile, account)
 		totalCount += count
 	}
-
-	if totalCount > 0 {
-		dp.logger.Info("处理消息数据完成",
-			zap.String("dbFile", dbFile),
-			zap.Int("total_count", totalCount),
-		)
-	}
-}
-
-// getMessageTablesWithGORM 使用GORM获取所有消息表
-func (dp *DataProcessor) getMessageTablesWithGORM(db *gorm.DB) []string {
-	type TableName struct {
-		Name string `gorm:"column:name"`
-	}
-
-	var tables []TableName
-	err := db.Raw("SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'Msg_%' OR name LIKE 'msg_%' OR name LIKE 'MSG%')").Scan(&tables).Error
-	if err != nil {
-		dp.logger.Error("查询消息表失败", zap.Error(err))
-		return nil
-	}
-
-	var tableNames []string
-	for _, table := range tables {
-		tableNames = append(tableNames, table.Name)
-	}
-
-	return tableNames
 }
 
 // processMessageTableWithGORM 使用GORM处理单个消息表
@@ -166,6 +141,8 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 	var lastID int64
 	exists := false
 	if lastID, exists = dp.dbState.MessageTableMap[tableName]; !exists {
+		lastID = 0
+	} else {
 		lastID = 0
 	}
 
@@ -230,18 +207,16 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 				Owner:             account,
 				Hash:              strings.TrimPrefix(tableName, "Msg_"),
 			}
-			// 更新最后处理的ID
-			lastID = msgResult.LocalId
 
 			// 发送消息
 			err = dp.wsClient.SendFcgMessage(message)
 			if err != nil {
 				dp.logger.Error("发送消息数据失败", zap.Error(err))
-				continue
-			} else {
-				dp.logger.Warn("WebSocket连接已断开，跳过消息发送")
-				continue
+				return 0
 			}
+
+			// 更新最后处理的ID
+			lastID = msgResult.LocalId
 		}
 
 		// 保存进度
@@ -255,6 +230,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 	}
 
 	if totalCount > 0 {
+		fmt.Println("已发送 ", totalCount, " 条新消息")
 		dp.logger.Debug("process message batch success",
 			zap.String("table", tableName),
 			zap.Int("totalCount", totalCount),
@@ -263,4 +239,25 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 	}
 
 	return totalCount
+}
+
+// getMessageTablesWithGORM 使用GORM获取所有消息表
+func (dp *DataProcessor) getMessageTablesWithGORM(db *gorm.DB) []string {
+	type TableName struct {
+		Name string `gorm:"column:name"`
+	}
+
+	var tables []TableName
+	err := db.Raw("SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'Msg_%' OR name LIKE 'msg_%' OR name LIKE 'MSG%')").Scan(&tables).Error
+	if err != nil {
+		dp.logger.Error("查询消息表失败", zap.Error(err))
+		return nil
+	}
+
+	var tableNames []string
+	for _, table := range tables {
+		tableNames = append(tableNames, table.Name)
+	}
+
+	return tableNames
 }

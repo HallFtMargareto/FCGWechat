@@ -30,9 +30,7 @@ func (m *Manager) Initialize() error {
 	// 初始化WebSocket连接
 	if err := m.processor.InitializeWebSocket(); err != nil {
 		fmt.Println("WebSocket连接失败", zap.Error(err))
-		// 这里不返回错误，允许程序继续运行
-	} else {
-		fmt.Println("WebSocket连接建立成功")
+		return err
 	}
 
 	// 加载账户信息

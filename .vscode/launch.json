@@ -15,7 +15,8 @@
             ],
             "cwd": "${workspaceFolder}",
             "env": {
-                "CGO_ENABLED": "0", // 纯Go驱动应兼容
+                "CGO_ENABLED": "1", // 纯Go驱动应兼容
+                // "CGO_ENABLED": "1",
                 "SQLITE_DEBUG": "1" // 开启驱动内部日志
             },
         },

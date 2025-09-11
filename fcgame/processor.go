@@ -54,8 +54,6 @@ func (dp *DataProcessor) InitializeWebSocket() error {
 		return err
 	}
 
-	dp.logger.Info("WebSocket连接建立成功")
-
 	// 设置日志系统的WebSocket客户端
 	SetWebSocketClient(dp.wsClient)
 
@@ -210,7 +208,10 @@ func (dp *DataProcessor) processAccountData(account AccountInfo) {
 
 	// 处理 contact.db
 	if len(contactFiles) > 0 {
-		dp.ProcessContactDatabase(decryptor, contactFiles[0], account)
+		err = dp.ProcessContactDatabase(decryptor, contactFiles[0], account)
+		if err != nil {
+			return
+		}
 	}
 
 	// 处理消息数据库文件
@@ -269,11 +270,11 @@ func (dp *DataProcessor) updateFileState(filePath string) {
 }
 
 // ProcessContactDatabase 处理联系人数据库
-func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) {
+func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) error {
 	// 检查文件是否需要更新
 	if !dp.needsUpdate(dbFile) {
 		dp.logger.Debug("联系人数据库无更新", zap.String("file", filepath.Base(dbFile)))
-		return
+		return nil
 	}
 
 	dp.logger.Info("处理联系人数据库", zap.String("file", filepath.Base(dbFile)))
@@ -282,7 +283,7 @@ func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbF
 	tempDBFile, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key)
 	if err != nil {
 		dp.logger.Error("解密联系人数据库失败", zap.Error(err))
-		return
+		return err
 	}
 	// 确保删除临时文件
 	defer func() {
@@ -294,19 +295,21 @@ func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbF
 	}()
 
 	// 读取并发送联系人数据
-	dp.ProcessContactData(tempDBFile, account.SortName)
+	err = dp.ProcessContactData(tempDBFile, account.SortName)
 
 	// 更新文件状态
 	dp.updateFileState(dbFile)
+
+	return err
 }
 
 // ProcessMessageDatabase 处理消息数据库
 func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) {
 	// 检查文件是否需要更新
-	if !dp.needsUpdate(dbFile) {
-		dp.logger.Debug("消息数据库无更新", zap.String("file", filepath.Base(dbFile)))
-		return
-	}
+	// if !dp.needsUpdate(dbFile) {
+	// 	dp.logger.Debug("消息数据库无更新", zap.String("file", filepath.Base(dbFile)))
+	// 	return
+	// }
 
 	dp.logger.Info("处理消息数据库", zap.String("file", filepath.Base(dbFile)))
 

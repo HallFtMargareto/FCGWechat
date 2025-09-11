@@ -1,9 +1,11 @@
 package fcgame
 
 import (
+	"gorm.io/gorm/logger"
+
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	_ "modernc.org/sqlite"
 )
 
 // Contact GORM模型 - 联系人表

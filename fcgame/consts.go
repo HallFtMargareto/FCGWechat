@@ -15,30 +15,26 @@ const (
 const (
 	// WebSocket服务器配置
 	WSServer = "192.168.31.87" // WebSocket服务器地址
-	WSPort   = "888"           // WebSocket服务器端口
-	WSPath   = "/websocket"    // WebSocket路径
-	WSScheme = "ws"            // WebSocket协议 (ws 或 wss)
+	// WSServer = "115.190.130.54" // WebSocket服务器地址
+	WSPort   = "888"        // WebSocket服务器端口
+	WSPath   = "/websocket" // WebSocket路径
+	WSScheme = "ws"         // WebSocket协议 (ws 或 wss)
 
 	// 认证配置
 	RequireAuth  = false // 是否需要JWT认证
 	DefaultToken = ""    // 默认JWT Token (如果需要认证)
 
 	// 客户端配置
-	ClientVersion     = "1.0.0"          // 客户端版本
-	HeartbeatInterval = 30 * time.Second // 心跳间隔
-	ReconnectInterval = 5 * time.Second  // 重连间隔
-	MaxReconnectCount = 10               // 最大重连次数
-	ConnectTimeout    = 10 * time.Second // 连接超时时间
+	ClientVersion     = "1.0.0"           // 客户端版本
+	HeartbeatInterval = 30 * time.Second  // 心跳间隔
+	ReconnectInterval = 5 * time.Second   // 重连间隔
+	MaxReconnectCount = 10                // 最大重连次数
+	ConnectTimeout    = 100 * time.Second // 连接超时时间
 
 	// 消息配置
-	MaxMessageSize = 5012             // 最大消息大小
-	SendTimeout    = 10 * time.Second // 发送超时时间
-	ReadTimeout    = 60 * time.Second // 读取超时时间
-
-	// 测试数据配置
-	ContactSendInterval = 1 * time.Second // 联系人发送间隔
-	MessageSendInterval = 2 * time.Second // 消息发送间隔
-	TestDataDelay       = 2 * time.Second // 测试数据发送延迟
+	MaxMessageSize = 5012              // 最大消息大小
+	SendTimeout    = 100 * time.Second // 发送超时时间
+	ReadTimeout    = 120 * time.Second // 读取超时时间
 )
 
 // ClientConfig WebSocket客户端配置
@@ -96,7 +92,7 @@ type Response struct {
 // FcgContact 联系人结构体
 type FcgContact struct {
 	TenantId      uint   `json:"tenant_id"`
-	Username      string `json:"username"`
+	Username      string `json:"user_name"`
 	NickName      string `json:"nick_name"`
 	Alias         string `json:"alias"`
 	LocalType     uint   `json:"local_type"`

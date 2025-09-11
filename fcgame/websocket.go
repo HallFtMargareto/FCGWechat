@@ -2,7 +2,6 @@ package fcgame
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -125,9 +124,9 @@ func (client *WebSocketClient) Connect() error {
 
 	// 设置连接参数
 	client.conn.SetReadLimit(MaxMessageSize)
-	client.conn.SetPongHandler(func(appData string) error {
-		return client.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
-	})
+	// client.conn.SetPongHandler(func(appData string) error {
+	// 	return client.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
+	// })
 
 	return nil
 }
@@ -193,6 +192,7 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 	// 设置发送超时
 	client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
 	err = client.conn.WriteMessage(websocket.TextMessage, msgBytes)
+	fmt.Println("发送消息:", string(msgBytes))
 	if err != nil {
 		client.isConnected = false
 		return fmt.Errorf("发送消息失败: %v", err)
@@ -205,23 +205,14 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 
 // 发送联系人数据
 func (client *WebSocketClient) SendContact(contact FcgContact) error {
-	if !client.IsConnected() {
-		return errors.New("not connected")
-	}
 	return client.SendMessage("fccontact", contact)
 }
 
 // 发送消息数据
 func (client *WebSocketClient) SendFcgMessage(message FcgMessage) error {
-	if !client.IsConnected() {
-		return errors.New("not connected")
-	}
 	return client.SendMessage("fcmessage", message)
 }
 func (client *WebSocketClient) SendClientLog(log any) error {
-	if !client.IsConnected() {
-		return errors.New("not connected")
-	}
 	return client.SendMessage("clientlog", log)
 }
 
@@ -230,9 +221,8 @@ func (client *WebSocketClient) SendHeartbeat() error {
 	if !client.IsConnected() {
 		return fmt.Errorf("连接未建立")
 	}
-
-	client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
-	err := client.conn.WriteMessage(websocket.PingMessage, []byte("ping"))
+	err := client.conn.WriteMessage(websocket.PingMessage, nil)
+	// fmt.Println("发送PING消息 ", err)
 	if err != nil {
 		client.isConnected = false
 		return fmt.Errorf("发送心跳失败: %v", err)
@@ -253,25 +243,33 @@ func (client *WebSocketClient) ListenMessages() {
 			}
 			client.logger.Error("panic in ListenMessages", zap.Error(err))
 
-			fmt.Println("❗ 消息监听出现panic: %v", err)
+			fmt.Println("消息监听出现panic: ", err)
 		}
 		client.isConnected = false
 	}()
 
+	client.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
+
+	// 设置 PongHandler
+	client.conn.SetPongHandler(func(appData string) error {
+		fmt.Println("接收服务器PING包:", time.Now().Unix())
+		client.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
+		return nil
+	})
+
 	for client.IsConnected() && !client.isShutdown {
 		// 设置读取超时
-		client.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 
 		_, message, err := client.conn.ReadMessage()
 		if err != nil {
 			client.logger.Error("读取消息错误:", zap.Error(err))
 
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				fmt.Println("❗ WebSocket意外关闭: %v", err)
+				fmt.Println("WebSocket意外关闭: ", err)
 			} else if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-				fmt.Println("🔌 WebSocket正常关闭")
+				fmt.Println("WebSocket正常关闭")
 			} else {
-				fmt.Println("❗ 读取消息失败: %v", err)
+				fmt.Println("读取消息失败: ", err)
 			}
 			client.isConnected = false
 
@@ -292,11 +290,11 @@ func (client *WebSocketClient) ListenMessages() {
 		err = json.Unmarshal(message, &response)
 		if err != nil {
 			client.logger.Error("parsing response message error: ", zap.Error(err))
-			fmt.Println("parsing response message error: %v", err)
+			//fmt.Println("parsing response message error: ", message)
 		} else {
 			if response.Data != nil {
 				dataBytes, _ := json.MarshalIndent(response.Data, "", "  ")
-				fmt.Println("接收数据: %s", string(dataBytes))
+				fmt.Println("接收数据: ", string(dataBytes))
 			}
 		}
 	}
