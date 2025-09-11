@@ -2,12 +2,11 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/sjzar/chatlog/fcgame"
-	"github.com/sjzar/chatlog/pkg/logger"
-	"go.uber.org/zap"
 	_ "modernc.org/sqlite" // 替换 import "github.com/mattn/go-sqlite3"
 )
 
@@ -17,7 +16,7 @@ func main() {
 
 	db, err := sql.Open("sqlite", tempDBFile)
 	if err != nil {
-		logger.Error("打开临时数据库失败", zap.Error(err))
+		fmt.Println(err)
 		return
 	}
 	defer db.Close()
@@ -31,7 +30,7 @@ func main() {
 	// 执行查询
 	rows, err := db.Query(query)
 	if err != nil {
-		logger.Error("查询联系人数据失败", zap.Error(err))
+		fmt.Println(err)
 		return
 	}
 	defer rows.Close()
@@ -58,7 +57,7 @@ func main() {
 		)
 
 		if err != nil {
-			logger.Error("扫描联系人数据失败", zap.Error(err))
+			fmt.Println(err)
 			continue
 		}
 

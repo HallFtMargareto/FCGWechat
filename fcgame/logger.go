@@ -1,34 +1,91 @@
 package fcgame
 
 import (
-	"github.com/sjzar/chatlog/pkg/logger"
+	"os"
+	"path/filepath"
+
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
-// LogManager 日志管理器
-type LogManager struct{}
+var Logger *zap.Logger
 
-// NewLogManager 创建新的日志管理器
-func NewLogManager() *LogManager {
-	return &LogManager{}
+// InitLogger 初始化日志记录器
+func InitLogger() (*zap.Logger, error) {
+	// 获取当前程序执行目录
+	execPath, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	execDir := filepath.Dir(execPath)
+
+	// 创建日志目录
+	logDir := filepath.Join(execDir, "log")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return nil, err
+	}
+
+	// 创建日志文件路径
+	logFile := filepath.Join(logDir, "fcgame.log")
+
+	// 配置日志编码器
+	encoderConfig := zapcore.EncoderConfig{
+		TimeKey:        "time",
+		LevelKey:       "level",
+		NameKey:        "logger",
+		CallerKey:      "caller",
+		MessageKey:     "msg",
+		StacktraceKey:  "stacktrace",
+		LineEnding:     zapcore.DefaultLineEnding,
+		EncodeLevel:    zapcore.LowercaseLevelEncoder,
+		EncodeTime:     zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05"),
+		EncodeDuration: zapcore.SecondsDurationEncoder,
+		EncodeCaller:   zapcore.ShortCallerEncoder,
+	}
+
+	// 创建文件写入器
+	fileWriter, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return nil, err
+	}
+
+	// 创建核心组件 - 只输出到文件
+	core := zapcore.NewCore(
+		zapcore.NewJSONEncoder(encoderConfig),
+		zapcore.AddSync(fileWriter),
+		zapcore.DebugLevel,
+	)
+
+	// 创建日志记录器
+	Logger = zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
+
+	return Logger, nil
 }
 
-// LogInfo 记录信息日志
-func (lm *LogManager) LogInfo(msg string, fields ...zap.Field) {
-	logger.Info(msg, fields...)
+// Sync 刷新日志缓冲区
+func Sync() {
+	if Logger != nil {
+		Logger.Sync()
+	}
 }
 
-// LogError 记录错误日志
-func (lm *LogManager) LogError(msg string, fields ...zap.Field) {
-	logger.Error(msg, fields...)
+// 便捷方法
+func Info(msg string, fields ...zap.Field) {
+	Logger.Info(msg, fields...)
 }
 
-// LogWarn 记录警告日志
-func (lm *LogManager) LogWarn(msg string, fields ...zap.Field) {
-	logger.Warn(msg, fields...)
+func Error(msg string, fields ...zap.Field) {
+	Logger.Error(msg, fields...)
 }
 
-// LogDebug 记录调试日志
-func (lm *LogManager) LogDebug(msg string, fields ...zap.Field) {
-	logger.Debug(msg, fields...)
+func Debug(msg string, fields ...zap.Field) {
+	Logger.Debug(msg, fields...)
+}
+
+func Warn(msg string, fields ...zap.Field) {
+	Logger.Warn(msg, fields...)
+}
+
+func Fatal(msg string, fields ...zap.Field) {
+	Logger.Fatal(msg, fields...)
 }

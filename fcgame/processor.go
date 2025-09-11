@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/sjzar/chatlog/internal/wechat/decrypt"
-	"github.com/sjzar/chatlog/pkg/logger"
 	"github.com/sjzar/chatlog/pkg/rbblot"
 	"go.uber.org/zap"
 )
@@ -24,10 +23,15 @@ type DataProcessor struct {
 	processLock   sync.Mutex // 防止重复处理的锁
 	rbblot        *rbblot.RBblotCore
 	wechatManager *WechatManager
+	logger        *zap.Logger
 }
 
 // NewDataProcessor 创建新的数据处理器
 func NewDataProcessor(rb *rbblot.RBblotCore) *DataProcessor {
+	logger, err := InitLogger()
+	if err != nil {
+		panic(err)
+	}
 	return &DataProcessor{
 		dbState: DatabaseState{
 			ContactLastID:   0,
@@ -36,20 +40,21 @@ func NewDataProcessor(rb *rbblot.RBblotCore) *DataProcessor {
 		},
 		rbblot:        rb,
 		wechatManager: NewWechatManager(),
+		logger:        logger,
 	}
 }
 
 // InitializeWebSocket 初始化WebSocket连接
 func (dp *DataProcessor) InitializeWebSocket() error {
 	config := GetDefaultConfig()
-	dp.wsClient = NewWebSocketClient(config)
+	dp.wsClient = NewWebSocketClient(config, dp.logger)
 
 	if err := dp.wsClient.ConnectWithRetry(); err != nil {
-		logger.Warn("WebSocket连接失败", zap.Error(err))
+		dp.logger.Warn("WebSocket连接失败", zap.Error(err))
 		return err
 	}
 
-	logger.Info("WebSocket连接建立成功")
+	dp.logger.Info("WebSocket连接建立成功")
 
 	// 启动消息监听和心跳
 	go dp.wsClient.ListenMessages()
@@ -63,7 +68,7 @@ func (dp *DataProcessor) LoadAccounts() error {
 	// 尝试从缓存中读取账户信息
 	accounts := dp.loadAccountsFromCache()
 	if len(accounts) == 0 {
-		logger.Info("未找到缓存的账户信息，开始获取")
+		dp.logger.Info("未找到缓存的账户信息，开始获取")
 		accounts = dp.getAndSaveAccounts()
 	}
 
@@ -83,23 +88,23 @@ func (dp *DataProcessor) LoadDatabaseState() {
 	}
 
 	if err := json.Unmarshal(data, &dp.dbState); err != nil {
-		logger.Error("反序列化数据库状态失败", zap.Error(err))
+		dp.logger.Error("反序列化数据库状态失败", zap.Error(err))
 		return
 	}
 
-	logger.Info("成功加载数据库状态")
+	dp.logger.Info("成功加载数据库状态")
 }
 
 // SaveDatabaseState 保存数据库状态到缓存
 func (dp *DataProcessor) SaveDatabaseState() {
 	data, err := json.Marshal(dp.dbState)
 	if err != nil {
-		logger.Error("序列化数据库状态失败", zap.Error(err))
+		dp.logger.Error("序列化数据库状态失败", zap.Error(err))
 		return
 	}
 
 	dp.rbblot.Store("database", "state", data)
-	logger.Debug("数据库状态已保存")
+	dp.logger.Debug("数据库状态已保存")
 }
 
 // ProcessAllAccounts 处理所有账户
@@ -116,18 +121,18 @@ func (dp *DataProcessor) ProcessAllAccounts() {
 
 // StartPeriodicProcessing 启动定期处理
 func (dp *DataProcessor) StartPeriodicProcessing() {
-	logger.Info("找到账户，开始定期解密", zap.Int("account_count", len(dp.accounts)))
+	dp.logger.Info("找到账户，开始定期解密", zap.Int("account_count", len(dp.accounts)))
 
 	// 定时器，每分钟执行一次
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
-	logger.Info("定时器启动，每分钟处理一次")
+	dp.logger.Info("定时器启动，每分钟处理一次")
 
 	for {
 		select {
 		case <-ticker.C:
-			logger.Debug("定期处理任务开始")
+			dp.logger.Debug("定期处理任务开始")
 			// 加锁防止重复处理
 			dp.processLock.Lock()
 			for _, account := range dp.accounts {
@@ -136,7 +141,7 @@ func (dp *DataProcessor) StartPeriodicProcessing() {
 			// 保存数据库状态
 			dp.SaveDatabaseState()
 			dp.processLock.Unlock()
-			logger.Debug("定期处理任务完成")
+			dp.logger.Debug("定期处理任务完成")
 		}
 	}
 }
@@ -158,7 +163,7 @@ func (dp *DataProcessor) loadAccountsFromCache() []AccountInfo {
 	}
 
 	if err := json.Unmarshal(data, &accounts); err != nil {
-		logger.Error("反序列化账户信息失败", zap.Error(err))
+		dp.logger.Error("反序列化账户信息失败", zap.Error(err))
 		return nil
 	}
 
@@ -173,12 +178,12 @@ func (dp *DataProcessor) getAndSaveAccounts() []AccountInfo {
 		// 保存到缓存
 		data, err := json.Marshal(accounts)
 		if err != nil {
-			logger.Error("序列化账户信息失败", zap.Error(err))
+			dp.logger.Error("序列化账户信息失败", zap.Error(err))
 			return accounts
 		}
 
 		dp.rbblot.Store("accounts", "list", data)
-		logger.Info("成功保存账户信息到缓存", zap.Int("count", len(accounts)))
+		dp.logger.Info("成功保存账户信息到缓存", zap.Int("count", len(accounts)))
 	}
 
 	return accounts
@@ -186,12 +191,12 @@ func (dp *DataProcessor) getAndSaveAccounts() []AccountInfo {
 
 // processAccountData 处理账户数据（解密、读取、发送）
 func (dp *DataProcessor) processAccountData(account AccountInfo) {
-	logger.Info("开始处理账户", zap.String("account", account.Name))
+	dp.logger.Info("开始处理账户", zap.String("account", account.Name))
 
 	// 创建解密器
 	decryptor, err := decrypt.NewDecryptor(account.Platform, account.Version)
 	if err != nil {
-		logger.Error("创建解密器失败", zap.String("account", account.Name), zap.Error(err))
+		dp.logger.Error("创建解密器失败", zap.String("account", account.Name), zap.Error(err))
 		return
 	}
 
@@ -210,14 +215,14 @@ func (dp *DataProcessor) processAccountData(account AccountInfo) {
 		}
 	}
 
-	logger.Info("账户处理完成", zap.String("account", account.Name))
+	dp.logger.Info("账户处理完成", zap.String("account", account.Name))
 }
 
 // needsUpdate 检查文件是否需要更新
 func (dp *DataProcessor) needsUpdate(filePath string) bool {
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
-		logger.Error("获取文件信息失败", zap.String("file", filePath), zap.Error(err))
+		dp.logger.Error("获取文件信息失败", zap.String("file", filePath), zap.Error(err))
 		return false
 	}
 
@@ -243,7 +248,7 @@ func (dp *DataProcessor) needsUpdate(filePath string) bool {
 func (dp *DataProcessor) updateFileState(filePath string) {
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
-		logger.Error("获取文件信息失败", zap.String("file", filePath), zap.Error(err))
+		dp.logger.Error("获取文件信息失败", zap.String("file", filePath), zap.Error(err))
 		return
 	}
 
@@ -262,24 +267,24 @@ func (dp *DataProcessor) updateFileState(filePath string) {
 func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) {
 	// 检查文件是否需要更新
 	if !dp.needsUpdate(dbFile) {
-		logger.Debug("联系人数据库无更新", zap.String("file", filepath.Base(dbFile)))
+		dp.logger.Debug("联系人数据库无更新", zap.String("file", filepath.Base(dbFile)))
 		return
 	}
 
-	logger.Info("处理联系人数据库", zap.String("file", filepath.Base(dbFile)))
+	dp.logger.Info("处理联系人数据库", zap.String("file", filepath.Base(dbFile)))
 
 	// 解密到临时文件
 	tempDBFile, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key)
 	if err != nil {
-		logger.Error("解密联系人数据库失败", zap.Error(err))
+		dp.logger.Error("解密联系人数据库失败", zap.Error(err))
 		return
 	}
 	// 确保删除临时文件
 	defer func() {
 		if err := os.Remove(tempDBFile); err != nil {
-			logger.Warn("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
+			dp.logger.Warn("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
 		} else {
-			logger.Debug("临时文件已删除", zap.String("file", tempDBFile))
+			dp.logger.Debug("临时文件已删除", zap.String("file", tempDBFile))
 		}
 	}()
 
@@ -294,24 +299,24 @@ func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbF
 func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) {
 	// 检查文件是否需要更新
 	if !dp.needsUpdate(dbFile) {
-		logger.Debug("消息数据库无更新", zap.String("file", filepath.Base(dbFile)))
+		dp.logger.Debug("消息数据库无更新", zap.String("file", filepath.Base(dbFile)))
 		return
 	}
 
-	logger.Info("处理消息数据库", zap.String("file", filepath.Base(dbFile)))
+	dp.logger.Info("处理消息数据库", zap.String("file", filepath.Base(dbFile)))
 
 	// 解密到临时文件
 	tempDBFile, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key)
 	if err != nil {
-		logger.Error("解密消息数据库失败", zap.Error(err))
+		dp.logger.Error("解密消息数据库失败", zap.Error(err))
 		return
 	}
 	// 确保删除临时文件
 	defer func() {
 		if err := os.Remove(tempDBFile); err != nil {
-			logger.Warn("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
+			dp.logger.Warn("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
 		} else {
-			logger.Debug("临时文件已删除", zap.String("file", tempDBFile))
+			dp.logger.Debug("临时文件已删除", zap.String("file", tempDBFile))
 		}
 	}()
 

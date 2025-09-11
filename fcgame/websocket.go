@@ -2,16 +2,14 @@ package fcgame
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/sjzar/chatlog/pkg/logger"
 	"go.uber.org/zap"
 )
 
@@ -46,20 +44,13 @@ type WebSocketClient struct {
 	heartbeatStop chan bool
 	messageStop   chan bool
 	errorChan     chan error
-	logger        *log.Logger
+	logger        *zap.Logger
 }
 
 // 创建新的WebSocket客户端
-func NewWebSocketClient(config ...ClientConfig) *WebSocketClient {
-	var cfg ClientConfig
-	if len(config) > 0 {
-		cfg = config[0]
-	} else {
-		cfg = GetDefaultConfig()
-	}
-
+func NewWebSocketClient(config ClientConfig, log *zap.Logger) *WebSocketClient {
 	return &WebSocketClient{
-		config:        cfg,
+		config:        config,
 		msgID:         1,
 		isConnected:   false,
 		isShutdown:    false,
@@ -67,7 +58,7 @@ func NewWebSocketClient(config ...ClientConfig) *WebSocketClient {
 		heartbeatStop: make(chan bool, 1),
 		messageStop:   make(chan bool, 1),
 		errorChan:     make(chan error, 10),
-		logger:        log.New(os.Stdout, "[WS-Client] ", log.LstdFlags|log.Lshortfile),
+		logger:        log,
 	}
 }
 
@@ -84,7 +75,7 @@ func (client *WebSocketClient) Connect() error {
 		Path:   client.config.Path,
 	}
 
-	client.logger.Printf("正在连接到WebSocket服务器: %s", u.String())
+	client.logger.Info("正在连接到WebSocket服务器: " + u.String())
 
 	// 设置请求头
 	headers := http.Header{}
@@ -110,7 +101,7 @@ func (client *WebSocketClient) Connect() error {
 	conn, resp, err := dialer.Dial(u.String(), headers)
 	if err != nil {
 		if resp != nil {
-			client.logger.Printf("连接失败: HTTP %d %s", resp.StatusCode, resp.Status)
+			client.logger.Error("Socket连接失败", zap.Int("resp.StatusCode", resp.StatusCode), zap.Int("resp.StatusCode", resp.StatusCode))
 			if resp.StatusCode == 401 {
 				return fmt.Errorf("认证失败: 请检查JWT Token是否正确")
 			} else if resp.StatusCode == 403 {
@@ -130,12 +121,11 @@ func (client *WebSocketClient) Connect() error {
 	client.conn = conn
 	client.isConnected = true
 	client.reconnectCnt = 0
-	client.logger.Println("✅ WebSocket连接建立成功!")
+	fmt.Println("✅ WebSocket连接建立成功!")
 
 	// 设置连接参数
 	client.conn.SetReadLimit(MaxMessageSize)
 	client.conn.SetPongHandler(func(appData string) error {
-		client.logger.Println("💗 收到心跳响应: pong")
 		return client.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 	})
 
@@ -151,10 +141,10 @@ func (client *WebSocketClient) ConnectWithRetry() error {
 		}
 
 		client.reconnectCnt++
-		client.logger.Printf("❗ 连接失败 (%d/%d): %v", client.reconnectCnt, client.config.MaxReconnect, err)
+		fmt.Printf("❗ 连接失败 (%d/%d): %v", client.reconnectCnt, client.config.MaxReconnect, err)
 
 		if client.reconnectCnt < client.config.MaxReconnect && !client.isShutdown {
-			client.logger.Printf("🔄 %v 后尝试重连...", client.config.ReconnectWait)
+			fmt.Printf("🔄 %v 后尝试重连...", client.config.ReconnectWait)
 			time.Sleep(client.config.ReconnectWait)
 		}
 	}
@@ -200,8 +190,6 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 		return fmt.Errorf("序列化消息失败: %v", err)
 	}
 
-	client.logger.Printf("📤 发送消息 [ID:%d]: %s", request.Id, string(msgBytes))
-
 	// 设置发送超时
 	client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
 	err = client.conn.WriteMessage(websocket.TextMessage, msgBytes)
@@ -217,14 +205,24 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 
 // 发送联系人数据
 func (client *WebSocketClient) SendContact(contact FcgContact) error {
-	// client.logger.Printf("📬 发送联系人数据: %s (%s)", contact.Username, contact.NickName)
+	if !client.IsConnected() {
+		return errors.New("not connected")
+	}
 	return client.SendMessage("fccontact", contact)
 }
 
 // 发送消息数据
 func (client *WebSocketClient) SendFcgMessage(message FcgMessage) error {
-	// client.logger.Printf("💬 发送消息数据: %s - %s", message.UserName, message.MessageContent)
+	if !client.IsConnected() {
+		return errors.New("not connected")
+	}
 	return client.SendMessage("fcmessage", message)
+}
+func (client *WebSocketClient) SendClientLog() error {
+	if !client.IsConnected() {
+		return errors.New("not connected")
+	}
+	return client.SendMessage("clientlog", nil)
 }
 
 // 发送心跳
@@ -233,7 +231,6 @@ func (client *WebSocketClient) SendHeartbeat() error {
 		return fmt.Errorf("连接未建立")
 	}
 
-	client.logger.Println("💗 发送心跳")
 	client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
 	err := client.conn.WriteMessage(websocket.PingMessage, []byte("ping"))
 	if err != nil {
@@ -254,7 +251,9 @@ func (client *WebSocketClient) ListenMessages() {
 			} else {
 				err = fmt.Errorf("unexpected panic: %v", recovered)
 			}
-			client.logger.Printf("❗ 消息监听出现panic: %v", err)
+			client.logger.Error("panic in ListenMessages", zap.Error(err))
+
+			fmt.Println("❗ 消息监听出现panic: %v", err)
 		}
 		client.isConnected = false
 	}()
@@ -265,14 +264,14 @@ func (client *WebSocketClient) ListenMessages() {
 
 		_, message, err := client.conn.ReadMessage()
 		if err != nil {
-			logger.Error("❌ 读取消息错误: %v", zap.Error(err))
+			client.logger.Error("读取消息错误:", zap.Error(err))
 
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				client.logger.Printf("❗ WebSocket意外关闭: %v", err)
+				fmt.Println("❗ WebSocket意外关闭: %v", err)
 			} else if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-				client.logger.Println("🔌 WebSocket正常关闭")
+				fmt.Println("🔌 WebSocket正常关闭")
 			} else {
-				client.logger.Printf("❗ 读取消息失败: %v", err)
+				fmt.Println("❗ 读取消息失败: %v", err)
 			}
 			client.isConnected = false
 
@@ -292,11 +291,12 @@ func (client *WebSocketClient) ListenMessages() {
 		var response Response
 		err = json.Unmarshal(message, &response)
 		if err != nil {
-			logger.Error("parsing response message error: ", zap.Error(err))
+			client.logger.Error("parsing response message error: ", zap.Error(err))
+			fmt.Println("parsing response message error: %v", err)
 		} else {
 			if response.Data != nil {
 				dataBytes, _ := json.MarshalIndent(response.Data, "", "  ")
-				client.logger.Printf("接收数据: %s", string(dataBytes))
+				fmt.Println("接收数据: %s", string(dataBytes))
 			}
 		}
 	}
@@ -308,17 +308,17 @@ func (client *WebSocketClient) handleReconnect() {
 		return
 	}
 
-	client.logger.Println("🔄 尝试重连...")
+	fmt.Println("🔄 尝试重连...")
 	time.Sleep(client.config.ReconnectWait)
 
 	err := client.ConnectWithRetry()
 	if err != nil {
-		client.logger.Printf("❗ 重连失败: %v", err)
+		fmt.Println("❗ 重连失败: %v", err)
 		client.errorChan <- err
 		return
 	}
 
-	client.logger.Println("✅ 重连成功！")
+	fmt.Println("✅ 重连成功！")
 	// 重新启动消息监听
 	go client.ListenMessages()
 	// 重新启动心跳
@@ -342,7 +342,7 @@ func (client *WebSocketClient) StartHeartbeat() {
 			}
 			err := client.SendHeartbeat()
 			if err != nil {
-				client.logger.Printf("❗ 心跳失败: %v", err)
+				client.logger.Error("❗ 心跳失败: ", zap.Error(err))
 				return
 			}
 		case <-client.heartbeatStop:
@@ -373,7 +373,6 @@ func (client *WebSocketClient) SendTextMessage(text string) error {
 		return fmt.Errorf("连接未建立")
 	}
 
-	client.logger.Printf("📝 发送文本消息: %s", text)
 	client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
 	err := client.conn.WriteMessage(websocket.TextMessage, []byte(text))
 	if err != nil {
@@ -382,17 +381,6 @@ func (client *WebSocketClient) SendTextMessage(text string) error {
 	}
 	client.conn.SetWriteDeadline(time.Time{})
 	return nil
-}
-
-// 更新配置
-func (client *WebSocketClient) UpdateConfig(config ClientConfig) {
-	client.config = config
-	client.logger.Printf("⚙️ 配置已更新")
-}
-
-// 获取配置
-func (client *WebSocketClient) GetConfig() ClientConfig {
-	return client.config
 }
 
 // 获取统计信息
@@ -419,7 +407,7 @@ func (client *WebSocketClient) Close() {
 		// 发送关闭消息
 		client.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "客户端主动关闭"))
 		client.conn.Close()
-		client.logger.Println("🔌 WebSocket连接已关闭")
+		fmt.Println("🔌 WebSocket连接已关闭")
 	}
 
 	// 关闭通道

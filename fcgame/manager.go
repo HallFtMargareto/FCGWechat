@@ -1,7 +1,8 @@
 package fcgame
 
 import (
-	"github.com/sjzar/chatlog/pkg/logger"
+	"fmt"
+
 	"github.com/sjzar/chatlog/pkg/rbblot"
 	"go.uber.org/zap"
 )
@@ -25,19 +26,18 @@ func NewManager() *Manager {
 
 // Initialize 初始化管理器
 func (m *Manager) Initialize() error {
-	logger.Info("debug模式启动")
 
 	// 初始化WebSocket连接
 	if err := m.processor.InitializeWebSocket(); err != nil {
-		logger.Warn("WebSocket连接失败", zap.Error(err))
+		fmt.Println("WebSocket连接失败", zap.Error(err))
 		// 这里不返回错误，允许程序继续运行
 	} else {
-		logger.Info("WebSocket连接建立成功")
+		fmt.Println("WebSocket连接建立成功")
 	}
 
 	// 加载账户信息
 	if err := m.processor.LoadAccounts(); err != nil {
-		logger.Error("加载账户失败", zap.Error(err))
+		fmt.Println("加载账户失败", zap.Error(err))
 		return err
 	}
 

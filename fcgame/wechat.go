@@ -11,7 +11,6 @@ import (
 	"github.com/sjzar/chatlog/internal/wechat"
 	"github.com/sjzar/chatlog/internal/wechat/decrypt"
 	"github.com/sjzar/chatlog/pkg/filemonitor"
-	"github.com/sjzar/chatlog/pkg/logger"
 	"go.uber.org/zap"
 )
 
@@ -54,13 +53,13 @@ func (wm *WechatManager) LoadAccountsFromCache(rbblot interface{}) []AccountInfo
 func (wm *WechatManager) GetAndSaveAccounts(rbblot interface{}) []AccountInfo {
 	// 加载微信实例
 	if err := wechat.Load(); err != nil {
-		logger.Error("加载微信实例失败", zap.Error(err))
+		Logger.Error("加载微信实例失败", zap.Error(err))
 		return nil
 	}
 
 	wechatAccounts := wechat.GetAccounts()
 	if len(wechatAccounts) == 0 {
-		logger.Error("未找到微信实例")
+		Logger.Error("未找到微信实例")
 		return nil
 	}
 
@@ -68,29 +67,29 @@ func (wm *WechatManager) GetAndSaveAccounts(rbblot interface{}) []AccountInfo {
 	ctx := context.Background()
 
 	for _, acc := range wechatAccounts {
-		logger.Info("处理账户", zap.String("name", acc.Name))
+		Logger.Info("处理账户", zap.String("name", acc.Name))
 
 		// 刷新账户状态
 		if err := acc.RefreshStatus(); err != nil {
-			logger.Warn("刷新账户状态失败", zap.String("name", acc.Name), zap.Error(err))
+			Logger.Warn("刷新账户状态失败", zap.String("name", acc.Name), zap.Error(err))
 			continue
 		}
 
 		// 只处理在线账户
 		if acc.Status != "online" {
-			logger.Info("账户不在线，跳过", zap.String("name", acc.Name), zap.String("status", acc.Status))
+			Logger.Info("账户不在线，跳过", zap.String("name", acc.Name), zap.String("status", acc.Status))
 			continue
 		}
 
 		// 获取密钥
 		key, imgKey, err := acc.GetKey(ctx)
 		if err != nil {
-			logger.Error("获取账户密钥失败", zap.String("name", acc.Name), zap.Error(err))
+			Logger.Error("获取账户密钥失败", zap.String("name", acc.Name), zap.Error(err))
 			continue
 		}
 
 		if imgKey != "" {
-			logger.Debug("获取到图片密钥", zap.String("name", acc.Name))
+			Logger.Debug("获取到图片密钥", zap.String("name", acc.Name))
 		}
 
 		// 创建账户信息
@@ -112,7 +111,7 @@ func (wm *WechatManager) GetAndSaveAccounts(rbblot interface{}) []AccountInfo {
 	}
 
 	if len(accounts) == 0 {
-		logger.Info("未获取到任何有效账户信息")
+		Logger.Info("未获取到任何有效账户信息")
 		return nil
 	}
 
@@ -141,7 +140,7 @@ func (wm *WechatManager) GetTargetDatabaseFiles(account AccountInfo) (contactFil
 		// 修改为精确匹配，确保文件名以message_开头，排除biz_message_x.db
 		messagePattern = `^message_([0-9]+)\.db$`
 	default:
-		logger.Error("不支持的平台或版本",
+		Logger.Error("不支持的平台或版本",
 			zap.String("platform", account.Platform),
 			zap.Int("version", account.Version))
 		return
@@ -150,14 +149,14 @@ func (wm *WechatManager) GetTargetDatabaseFiles(account AccountInfo) (contactFil
 	// 创建文件组监控器
 	contactGroup, err := filemonitor.NewFileGroup("contact", account.DataDir, contactPattern, []string{"fts"})
 	if err != nil {
-		logger.Error("创建联系人文件组失败", zap.Error(err))
+		Logger.Error("创建联系人文件组失败", zap.Error(err))
 	} else {
 		contactFiles, _ = contactGroup.List()
 	}
 
 	messageGroup, err := filemonitor.NewFileGroup("message", account.DataDir, messagePattern, []string{"fts"})
 	if err != nil {
-		logger.Error("创建消息文件组失败", zap.Error(err))
+		Logger.Error("创建消息文件组失败", zap.Error(err))
 	} else {
 		messageFiles, _ = messageGroup.List()
 	}
@@ -189,7 +188,7 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 	if err != nil {
 		// 如果已经解密，直接复制文件
 		if strings.Contains(err.Error(), "already decrypted") {
-			logger.Debug("文件已解密，直接复制", zap.String("file", filepath.Base(dbFile)))
+			Logger.Debug("文件已解密，直接复制", zap.String("file", filepath.Base(dbFile)))
 			data, readErr := os.ReadFile(dbFile)
 			if readErr != nil {
 				os.Remove(tempPath)
@@ -205,7 +204,7 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 		}
 	}
 
-	logger.Debug("数据库解密到临时文件成功",
+	Logger.Debug("数据库解密到临时文件成功",
 		zap.String("source", filepath.Base(dbFile)),
 		zap.String("temp", filepath.Base(tempPath)))
 

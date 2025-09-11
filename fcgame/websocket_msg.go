@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sjzar/chatlog/pkg/logger"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -15,14 +14,14 @@ func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) {
 	// 打开数据库连接
 	db, err := GetGormDB(tempDBFile)
 	if err != nil {
-		logger.Error("打开临时数据库失败", zap.Error(err))
+		dp.logger.Error("打开临时数据库失败", zap.Error(err))
 		return
 	}
 
 	// 获取原始数据库连接以便关闭
 	sqlDB, err := db.DB()
 	if err != nil {
-		logger.Error("获取原始数据库连接失败", zap.Error(err))
+		dp.logger.Error("获取原始数据库连接失败", zap.Error(err))
 		return
 	}
 	defer sqlDB.Close()
@@ -45,7 +44,7 @@ func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) {
 
 		err = query.Order("id ASC").Limit(batchSize).Find(&contacts).Error
 		if err != nil {
-			logger.Error("查询联系人数据失败", zap.Error(err))
+			dp.logger.Error("查询联系人数据失败", zap.Error(err))
 			return
 		}
 
@@ -72,12 +71,10 @@ func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) {
 			}
 
 			// 通过 WebSocket 发送
-			if dp.wsClient.IsConnected() {
-				err = dp.wsClient.SendContact(fcgContact)
-				if err != nil {
-					logger.Error("发送联系人数据失败", zap.Error(err))
-					continue
-				}
+			err = dp.wsClient.SendContact(fcgContact)
+			if err != nil {
+				dp.logger.Error("发送联系人数据失败", zap.Error(err))
+				continue
 			}
 
 			// 更新最后处理的ID
@@ -93,7 +90,7 @@ func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) {
 	}
 
 	if totalCount > 0 {
-		logger.Debug("process contact batch success",
+		dp.logger.Debug("process contact batch success",
 			zap.Int("totalCount", totalCount),
 			zap.Int64("last_id", dp.dbState.ContactLastID))
 	}
@@ -104,14 +101,14 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 	// 打开数据库连接
 	db, err := GetGormDB(tempDBFile)
 	if err != nil {
-		logger.Error("打开临时数据库失败", zap.Error(err))
+		dp.logger.Error("打开临时数据库失败", zap.Error(err))
 		return
 	}
 
 	// 获取原始数据库连接以便关闭
 	sqlDB, err := db.DB()
 	if err != nil {
-		logger.Error("获取原始数据库连接失败", zap.Error(err))
+		dp.logger.Error("获取原始数据库连接失败", zap.Error(err))
 		return
 	}
 	defer sqlDB.Close()
@@ -119,7 +116,7 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 	// 获取所有消息表
 	tables := dp.getMessageTablesWithGORM(db)
 	if len(tables) == 0 {
-		logger.Warn("未找到消息表")
+		dp.logger.Warn("未找到消息表")
 		return
 	}
 
@@ -132,7 +129,7 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 	}
 
 	if totalCount > 0 {
-		logger.Info("处理消息数据完成",
+		dp.logger.Info("处理消息数据完成",
 			zap.String("dbFile", dbFile),
 			zap.Int("total_count", totalCount),
 		)
@@ -148,7 +145,7 @@ func (dp *DataProcessor) getMessageTablesWithGORM(db *gorm.DB) []string {
 	var tables []TableName
 	err := db.Raw("SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'Msg_%' OR name LIKE 'msg_%' OR name LIKE 'MSG%')").Scan(&tables).Error
 	if err != nil {
-		logger.Error("查询消息表失败", zap.Error(err))
+		dp.logger.Error("查询消息表失败", zap.Error(err))
 		return nil
 	}
 
@@ -210,7 +207,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 		// 执行GORM原始SQL查询
 		err := db.Raw(query, args...).Scan(&messages).Error
 		if err != nil {
-			logger.Error("查询消息表失败", zap.String("table", tableName), zap.Error(err))
+			dp.logger.Error("查询消息表失败", zap.String("table", tableName), zap.Error(err))
 			return totalCount
 		}
 
@@ -241,14 +238,12 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 			}
 
 			// 发送消息
-			if dp.wsClient.IsConnected() {
-				err = dp.wsClient.SendFcgMessage(message)
-				if err != nil {
-					logger.Error("发送消息数据失败", zap.Error(err))
-					continue
-				}
+			err = dp.wsClient.SendFcgMessage(message)
+			if err != nil {
+				dp.logger.Error("发送消息数据失败", zap.Error(err))
+				continue
 			} else {
-				logger.Warn("WebSocket连接已断开，跳过消息发送")
+				dp.logger.Warn("WebSocket连接已断开，跳过消息发送")
 				continue
 			}
 
@@ -267,7 +262,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 	}
 
 	if totalCount > 0 {
-		logger.Debug("process message batch success",
+		dp.logger.Debug("process message batch success",
 			zap.String("table", tableName),
 			zap.Int("totalCount", totalCount),
 			zap.Int64("max_local_id", lastID),
