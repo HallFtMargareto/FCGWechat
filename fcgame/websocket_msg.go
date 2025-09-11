@@ -142,8 +142,6 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 	exists := false
 	if lastID, exists = dp.dbState.MessageTableMap[tableName]; !exists {
 		lastID = 0
-	} else {
-		lastID = 0
 	}
 
 	for {

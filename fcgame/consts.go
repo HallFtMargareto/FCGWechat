@@ -14,11 +14,11 @@ const (
 // WEBSOCKET配置
 const (
 	// WebSocket服务器配置
-	WSServer = "192.168.31.87" // WebSocket服务器地址
-	// WSServer = "115.190.130.54" // WebSocket服务器地址
-	WSPort   = "888"        // WebSocket服务器端口
-	WSPath   = "/websocket" // WebSocket路径
-	WSScheme = "ws"         // WebSocket协议 (ws 或 wss)
+	// WSServer = "127.0.0.1" // WebSocket服务器地址
+	WSServer = "115.190.130.54" // WebSocket服务器地址
+	WSPort   = "888"            // WebSocket服务器端口
+	WSPath   = "/websocket"     // WebSocket路径
+	WSScheme = "ws"             // WebSocket协议 (ws 或 wss)
 
 	// 认证配置
 	RequireAuth  = false // 是否需要JWT认证
@@ -32,7 +32,7 @@ const (
 	ConnectTimeout    = 100 * time.Second // 连接超时时间
 
 	// 消息配置
-	MaxMessageSize = 5012              // 最大消息大小
+	MaxMessageSize = 50120             // 最大消息大小
 	SendTimeout    = 100 * time.Second // 发送超时时间
 	ReadTimeout    = 120 * time.Second // 读取超时时间
 )

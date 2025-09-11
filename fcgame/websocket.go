@@ -192,7 +192,7 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 	// 设置发送超时
 	client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
 	err = client.conn.WriteMessage(websocket.TextMessage, msgBytes)
-	fmt.Println("发送消息:", string(msgBytes))
+	// fmt.Println("发送消息:", string(msgBytes))
 	if err != nil {
 		client.isConnected = false
 		return fmt.Errorf("发送消息失败: %v", err)

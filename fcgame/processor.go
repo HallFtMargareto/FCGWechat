@@ -306,10 +306,10 @@ func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbF
 // ProcessMessageDatabase 处理消息数据库
 func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) {
 	// 检查文件是否需要更新
-	// if !dp.needsUpdate(dbFile) {
-	// 	dp.logger.Debug("消息数据库无更新", zap.String("file", filepath.Base(dbFile)))
-	// 	return
-	// }
+	if !dp.needsUpdate(dbFile) {
+		dp.logger.Debug("消息数据库无更新", zap.String("file", filepath.Base(dbFile)))
+		return
+	}
 
 	dp.logger.Info("处理消息数据库", zap.String("file", filepath.Base(dbFile)))
 
