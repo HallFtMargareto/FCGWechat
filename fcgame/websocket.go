@@ -218,11 +218,11 @@ func (client *WebSocketClient) SendFcgMessage(message FcgMessage) error {
 	}
 	return client.SendMessage("fcmessage", message)
 }
-func (client *WebSocketClient) SendClientLog() error {
+func (client *WebSocketClient) SendClientLog(log any) error {
 	if !client.IsConnected() {
 		return errors.New("not connected")
 	}
-	return client.SendMessage("clientlog", nil)
+	return client.SendMessage("clientlog", log)
 }
 
 // 发送心跳

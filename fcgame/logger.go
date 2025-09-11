@@ -1,14 +1,122 @@
 package fcgame
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-var Logger *zap.Logger
+var (
+	Logger     *zap.Logger
+	wsClient   *WebSocketClient // WebSocket客户端实例
+	wsClientMu sync.RWMutex     // 保护WebSocket客户端的读写锁
+)
+
+// LogData 日志数据结构
+type LogData struct {
+	Level   string                 `json:"level"`
+	Time    time.Time              `json:"time"`
+	Caller  string                 `json:"caller"`
+	Message string                 `json:"message"`
+	Fields  map[string]interface{} `json:"fields,omitempty"`
+	Host    string                 `json:"host"`
+	App     string                 `json:"app"`
+}
+
+// WebSocketWriter 自定义的WebSocket写入器
+type WebSocketWriter struct {
+	originalWriter zapcore.WriteSyncer // 原始文件写入器
+}
+
+// NewWebSocketWriter 创建WebSocket写入器
+func NewWebSocketWriter(originalWriter zapcore.WriteSyncer) *WebSocketWriter {
+	return &WebSocketWriter{
+		originalWriter: originalWriter,
+	}
+}
+
+// Write 实现io.Writer接口
+func (w *WebSocketWriter) Write(p []byte) (n int, err error) {
+	// 首先写入文件
+	n, err = w.originalWriter.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	// 解析日志级别和内容
+	var logEntry map[string]interface{}
+	if jsonErr := json.Unmarshal(p, &logEntry); jsonErr == nil {
+		// 检查是否是错误级别的日志
+		if level, ok := logEntry["level"].(string); ok && level == "error" {
+			// 构建日志数据
+			logData := LogData{
+				Level:   level,
+				Time:    time.Now(),
+				Message: fmt.Sprintf("%v", logEntry["msg"]),
+				Host:    getHostName(),
+				App:     "fcgame",
+			}
+
+			if caller, ok := logEntry["caller"]; ok {
+				logData.Caller = fmt.Sprintf("%v", caller)
+			}
+
+			// 提取其他字段
+			fields := make(map[string]interface{})
+			for k, v := range logEntry {
+				if k != "level" && k != "time" && k != "msg" && k != "caller" {
+					fields[k] = v
+				}
+			}
+			if len(fields) > 0 {
+				logData.Fields = fields
+			}
+
+			// 异步发送到WebSocket服务器
+			go sendErrorLogToServer(logData)
+		}
+	}
+
+	return n, nil
+}
+
+// Sync 实现zapcore.WriteSyncer接口
+func (w *WebSocketWriter) Sync() error {
+	return w.originalWriter.Sync()
+}
+
+// getHostName 获取主机名
+func getHostName() string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "unknown"
+	}
+	return hostname
+}
+
+// sendErrorLogToServer 发送错误日志到服务器
+func sendErrorLogToServer(logData LogData) {
+	wsClientMu.RLock()
+	client := wsClient
+	wsClientMu.RUnlock()
+
+	if client == nil || !client.IsConnected() {
+		return // WebSocket未连接，跳过发送
+	}
+
+	err := client.SendClientLog(logData)
+	if err != nil {
+		// 注意：这里不能调用Logger.Error，否则会造成循环调用
+		fmt.Printf("发送错误日志到服务器失败: %v\n", err)
+	}
+}
 
 // InitLogger 初始化日志记录器
 func InitLogger() (*zap.Logger, error) {
@@ -25,8 +133,18 @@ func InitLogger() (*zap.Logger, error) {
 		return nil, err
 	}
 
-	// 创建日志文件路径
+	// 创建按天分割的日志文件路径
 	logFile := filepath.Join(logDir, "fcgame.log")
+
+	// 配置lumberjack按天轮转
+	lumberjackLogger := &lumberjack.Logger{
+		Filename:   logFile,
+		MaxSize:    100,  // 最大文件大小(MB)
+		MaxBackups: 30,   // 最多保留30个备份文件
+		MaxAge:     30,   // 最多保留30天
+		Compress:   true, // 压缩旧文件
+		LocalTime:  true, // 使用本地时间
+	}
 
 	// 配置日志编码器
 	encoderConfig := zapcore.EncoderConfig{
@@ -43,16 +161,14 @@ func InitLogger() (*zap.Logger, error) {
 		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
 
-	// 创建文件写入器
-	fileWriter, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		return nil, err
-	}
+	// 创建WebSocket写入器包装原始文件写入器
+	originalWriter := zapcore.AddSync(lumberjackLogger)
+	webSocketWriter := NewWebSocketWriter(originalWriter)
 
 	// 创建核心组件 - 只输出到文件
 	core := zapcore.NewCore(
 		zapcore.NewJSONEncoder(encoderConfig),
-		zapcore.AddSync(fileWriter),
+		webSocketWriter,
 		zapcore.DebugLevel,
 	)
 
@@ -60,6 +176,20 @@ func InitLogger() (*zap.Logger, error) {
 	Logger = zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
 
 	return Logger, nil
+}
+
+// SetWebSocketClient 设置WebSocket客户端实例
+func SetWebSocketClient(client *WebSocketClient) {
+	wsClientMu.Lock()
+	defer wsClientMu.Unlock()
+	wsClient = client
+}
+
+// ClearWebSocketClient 清除WebSocket客户端实例
+func ClearWebSocketClient() {
+	wsClientMu.Lock()
+	defer wsClientMu.Unlock()
+	wsClient = nil
 }
 
 // Sync 刷新日志缓冲区

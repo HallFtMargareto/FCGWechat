@@ -9,7 +9,7 @@ import (
 
 func main() {
 	manager := fcgame.NewManager()
-	defer manager.Close()
+	// defer manager.Close()
 
 	// 初始化管理器
 	if err := manager.Initialize(); err != nil {

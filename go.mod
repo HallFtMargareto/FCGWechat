@@ -26,6 +26,7 @@ require (
 	golang.org/x/crypto v0.41.0
 	golang.org/x/sys v0.35.0
 	google.golang.org/protobuf v1.36.7
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gorm.io/driver/sqlite v1.5.7
 	gorm.io/gorm v1.25.12
 	howett.net/plist v1.0.1

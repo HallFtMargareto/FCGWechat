@@ -157,12 +157,6 @@ func (dp *DataProcessor) getMessageTablesWithGORM(db *gorm.DB) []string {
 	return tableNames
 }
 
-// getMessageTables 获取所有消息表 (保留原有方法以保持兼容性)
-func getMessageTables(db *gorm.DB) []string {
-	processor := &DataProcessor{}
-	return processor.getMessageTablesWithGORM(db)
-}
-
 // processMessageTableWithGORM 使用GORM处理单个消息表
 func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbFile string, account string) int {
 	// 分批处理消息数据，每次最多500条
@@ -236,6 +230,8 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 				Owner:             account,
 				Hash:              strings.TrimPrefix(tableName, "Msg_"),
 			}
+			// 更新最后处理的ID
+			lastID = msgResult.LocalId
 
 			// 发送消息
 			err = dp.wsClient.SendFcgMessage(message)
@@ -246,9 +242,6 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 				dp.logger.Warn("WebSocket连接已断开，跳过消息发送")
 				continue
 			}
-
-			// 更新最后处理的ID
-			lastID = msgResult.LocalId
 		}
 
 		// 保存进度
@@ -270,9 +263,4 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 	}
 
 	return totalCount
-}
-
-// processMessageTable 处理单个消息表 (保留原有方法以保持兼容性)
-func (dp *DataProcessor) processMessageTable(db *gorm.DB, tableName, dbFile string, account string) int {
-	return dp.processMessageTableWithGORM(db, tableName, dbFile, account)
 }

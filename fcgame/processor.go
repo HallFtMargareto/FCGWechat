@@ -56,6 +56,9 @@ func (dp *DataProcessor) InitializeWebSocket() error {
 
 	dp.logger.Info("WebSocket连接建立成功")
 
+	// 设置日志系统的WebSocket客户端
+	SetWebSocketClient(dp.wsClient)
+
 	// 启动消息监听和心跳
 	go dp.wsClient.ListenMessages()
 	go dp.wsClient.StartHeartbeat()
@@ -149,6 +152,8 @@ func (dp *DataProcessor) StartPeriodicProcessing() {
 // Close 关闭数据处理器
 func (dp *DataProcessor) Close() {
 	if dp.wsClient != nil {
+		// 清除日志系统的WebSocket客户端引用
+		ClearWebSocketClient()
 		dp.wsClient.Close()
 	}
 }
