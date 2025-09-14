@@ -32,3 +32,7 @@ chatlog.exe# Added by goreleaser init:
 dist/
 rtpsystem.dat
 storage/
+fcgame_lxr.dat
+fcgame_lxr.dat-shm
+fcgame_lxr.dat-wal
+fcgame.dat

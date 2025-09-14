@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sjzar/chatlog/internal/model"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -144,6 +145,18 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 		lastID = 0
 	}
 
+	cdb, err := GetGormDB(CONTACT_DB)
+	if err != nil {
+		dp.logger.Error("open contact db fail.", zap.Error(err))
+		return 0
+	}
+	cdbCN, err := cdb.DB()
+	if err != nil {
+		dp.logger.Error("get contact db connection fail.", zap.Error(err))
+		return 0
+	}
+	defer cdbCN.Close()
+
 	for {
 		var messages []Message
 
@@ -158,6 +171,10 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 		// 添加条件
 		var conditions []string
 		var args []interface{}
+
+		// 只获取文本记录
+		conditions = append(conditions, "m.local_type = ?")
+		args = append(args, model.MessageTypeText)
 
 		// 添加 local_id 条件（防重复查询）
 		if lastID > 0 {
@@ -204,6 +221,14 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 				TaskList:          "",
 				Owner:             account,
 				Hash:              strings.TrimPrefix(tableName, "Msg_"),
+			}
+
+			var contact Contact
+			err := cdb.Raw("select * from contact where username = ?", message.UserName).Scan(&contact).Error
+			if err != nil || contact.ID == 0 {
+				message.NickName = "未知用户"
+			} else {
+				message.NickName = contact.NickName
 			}
 
 			// 发送消息
