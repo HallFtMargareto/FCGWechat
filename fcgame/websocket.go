@@ -65,6 +65,62 @@ func NewWebSocketClient(config ClientConfig, log *zap.Logger) *WebSocketClient {
 	}
 }
 
+func (client *WebSocketClient) Run() {
+	for !client.isShutdown {
+		// 1. 尝试连接
+		if err := client.Connect(); err != nil {
+			fmt.Println("连接失败，准备重试...", err)
+			// 使用ConnectWithRetry的逻辑进行等待
+			if client.config.Reconnect && !client.isShutdown {
+				time.Sleep(client.config.ReconnectWait)
+				continue // 继续下一次循环尝试连接
+			} else {
+				break // 如果不允许重连，则退出
+			}
+		}
+
+		// 2. 连接成功，启动所有协程
+		var wg sync.WaitGroup
+		wg.Add(2) // 读、写、心跳
+
+		SafeRun(func() {
+			defer wg.Done()
+			client.StartWriter()
+			fmt.Println("StartWriter 协程已退出。")
+		})
+
+		SafeRun(func() {
+			defer wg.Done()
+			client.ListenMessages()
+			fmt.Println("ListenMessages 协程已退出。")
+		})
+
+		// go func() {
+		// 	defer wg.Done()
+		// 	client.StartHeartbeat()
+		// 	client.logger.Info("StartHeartbeat 协程已退出。")
+		// }()
+		//client.logger.Info("客户端已连接，读、写、心跳协程已启动。")
+
+		// 3. 等待任何一个协程退出（意味着连接断开）
+		wg.Wait()
+		fmt.Println("连接已断开，所有相关协程已停止。")
+
+		// 4. 清理旧的连接
+		if client.conn != nil {
+			client.conn.Close()
+		}
+		// client.StopHeartbeat() // 确保心跳协程的资源被释放
+
+		// 5. 准备下一次重连
+		if client.config.Reconnect && !client.isShutdown {
+			fmt.Println("准备重连...")
+			time.Sleep(client.config.ReconnectWait)
+		}
+	}
+	client.logger.Info("客户端运行循环结束。")
+}
+
 // 连接到WebSocket服务器
 func (client *WebSocketClient) Connect() error {
 	if client.isShutdown {
@@ -245,7 +301,11 @@ func (client *WebSocketClient) ListenMessages() {
 		return nil
 	})
 
-	for client.IsConnected() && !client.isShutdown {
+	for {
+		if !client.IsConnected() {
+			return
+		}
+
 		// 设置读取超时
 		_, message, err := client.conn.ReadMessage()
 		if err != nil {
@@ -259,31 +319,32 @@ func (client *WebSocketClient) ListenMessages() {
 				fmt.Println("读取消息失败: ", err)
 			}
 			client.isConnected = false
-
+			return
 			// 如果需要自动重连
-			if client.config.Reconnect && !client.isShutdown {
-				err = client.ConnectWithRetry()
-				if err != nil {
-					fmt.Println("自动重连失败: ", err)
-					return
-				}
-			} else {
-				return
-			}
+			// if client.config.Reconnect && !client.isShutdown {
+			// 	err = client.ConnectWithRetry()
+			// 	if err != nil {
+			// 		fmt.Println("自动重连失败: ", err)
+			// 		return
+			// 	}
+			// } else {
+			// 	return
+			// }
 		}
 
 		// 解析响应消息
-		var response Response
-		err = json.Unmarshal(message, &response)
-		if err != nil {
-			client.logger.Error("parsing response message error: ", zap.Error(err), zap.Any("response", response))
-			fmt.Println("parsing response message error: ", message)
-		} else {
-			if response.Data != nil {
-				dataBytes, _ := json.MarshalIndent(response.Data, "", "  ")
-				fmt.Println("接收数据: ", string(dataBytes))
-			}
-		}
+		// var response Response
+		// err = json.Unmarshal(message, &response)
+		// if err != nil {
+		// 	client.logger.Error("parsing response message error: ", zap.Error(err), zap.Any("response", response))
+		// 	fmt.Println("parsing response message error: ", message)
+		// } else {
+		// 	if response.Data != nil {
+		// 		dataBytes, _ := json.MarshalIndent(response.Data, "", "  ")
+		// 		fmt.Println("接收数据: ", string(dataBytes))
+		// 	}
+		// }
+		fmt.Println(string(message))
 	}
 }
 
@@ -389,6 +450,7 @@ func (client *WebSocketClient) StartWriter() {
 		client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
 		err := client.conn.WriteMessage(websocket.TextMessage, msg)
 		client.conn.SetWriteDeadline(time.Time{}) // 清除超时
+
 		if err != nil {
 			client.logger.Error("发送消息失败:", zap.Error(err))
 			client.isConnected = false

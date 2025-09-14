@@ -69,3 +69,8 @@ func (m *Manager) Close() {
 		m.rbblot.Close()
 	}
 }
+
+// Run 运行管理器
+func (m *Manager) Test() {
+	m.processor.Test()
+}

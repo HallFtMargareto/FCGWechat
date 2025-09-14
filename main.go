@@ -12,7 +12,7 @@ import (
 
 func main() {
 	manager := fcgame.NewManager()
-	// defer manager.Close()
+	defer manager.Close()
 
 	// 初始化管理器
 	if err := manager.Initialize(); err != nil {
@@ -21,7 +21,7 @@ func main() {
 		return
 	}
 
-	// 运行管理器
+	// 运行解密发送任务
 	manager.Run()
 
 	Wait()

@@ -49,19 +49,21 @@ func (dp *DataProcessor) InitializeWebSocket() error {
 	config := GetDefaultConfig()
 	dp.wsClient = NewWebSocketClient(config, dp.logger)
 
-	if err := dp.wsClient.ConnectWithRetry(); err != nil {
-		dp.logger.Warn("WebSocket连接失败", zap.Error(err))
-		return err
-	}
+	// if err := dp.wsClient.ConnectWithRetry(); err != nil {
+	// 	dp.logger.Warn("WebSocket连接失败", zap.Error(err))
+	// 	return err
+	// }
 
 	// 设置日志系统的WebSocket客户端
 	SetWebSocketClient(dp.wsClient)
 
+	SafeRun(dp.wsClient.Run)
+
 	// 启动消息监听和心跳
 	// go dp.wsClient.ListenMessages()
-	SafeRun(dp.wsClient.ListenMessages)
+	//SafeRun(dp.wsClient.ListenMessages)
 
-	SafeRun(dp.wsClient.StartWriter)
+	//SafeRun(dp.wsClient.StartWriter)
 
 	// 只需要一方发 Ping，通常是服务端。客户端不用维持心跳，不要在双方都发心跳，否则会互相干扰
 	// go dp.wsClient.StartHeartbeat()
@@ -240,7 +242,7 @@ func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbF
 	dp.logger.Info("处理联系人数据库", zap.String("file", filepath.Base(dbFile)))
 
 	// 解密到临时文件
-	_, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key, true)
+	file, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key, true)
 	if err != nil {
 		dp.logger.Error("解密联系人数据库失败", zap.Error(err))
 		return err
@@ -255,7 +257,7 @@ func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbF
 	// }()
 
 	// 读取并发送联系人数据
-	//err = dp.ProcessContactData(tempDBFile, account.SortName)
+	err = dp.ProcessContactData(file, account.SortName)
 
 	// 更新文件状态
 	dp.updateFileState(dbFile)
@@ -337,5 +339,14 @@ func (dp *DataProcessor) updateFileState(filePath string) {
 		LastModTime:  fileInfo.ModTime(),
 		LastProcTime: time.Now(),
 		Size:         fileInfo.Size(),
+	}
+}
+
+func (dp *DataProcessor) Test() {
+	for {
+		snid := Snowflake.Generate().String()
+		err := dp.wsClient.SendMessage("zuan", snid)
+		fmt.Println("发送消息：", snid, err)
+		time.Sleep(time.Second * 10)
 	}
 }

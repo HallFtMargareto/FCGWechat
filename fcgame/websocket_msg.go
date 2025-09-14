@@ -90,7 +90,7 @@ func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) (
 	}
 
 	if totalCount > 0 {
-		fmt.Println("发送新群聊数据  ", totalCount, " 条")
+		fmt.Println("更新会话信息  ", totalCount, " 条")
 		dp.logger.Debug("process contact batch success",
 			zap.Int("totalCount", totalCount),
 			zap.Int64("last_id", dp.dbState.ContactLastID))
