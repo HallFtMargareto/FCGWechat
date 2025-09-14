@@ -3,6 +3,7 @@ package fcgame
 import (
 	"fmt"
 
+	"github.com/bwmarrin/snowflake"
 	"github.com/sjzar/chatlog/pkg/rbblot"
 	"go.uber.org/zap"
 )
@@ -26,6 +27,11 @@ func NewManager() *Manager {
 
 // Initialize 初始化管理器
 func (m *Manager) Initialize() error {
+	node, err := snowflake.NewNode(1)
+	if err != nil {
+		return err
+	}
+	Snowflake = node
 
 	// 初始化WebSocket连接
 	if err := m.processor.InitializeWebSocket(); err != nil {

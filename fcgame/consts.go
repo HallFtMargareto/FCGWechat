@@ -1,6 +1,12 @@
 package fcgame
 
-import "time"
+import (
+	"time"
+
+	"github.com/bwmarrin/snowflake"
+)
+
+var Snowflake *snowflake.Node
 
 // 基础配置
 const (
@@ -13,6 +19,9 @@ const (
 	TimeLayout = "2006-01-02 15:04:05"
 
 	CONTACT_DB = "fcgame_lxr.dat"
+
+	// 发送最大chan数量
+	MaxMessageQueue = 1000
 )
 
 // WEBSOCKET配置
@@ -31,8 +40,8 @@ const (
 	// 客户端配置
 	ClientVersion     = "1.0.0"           // 客户端版本
 	HeartbeatInterval = 30 * time.Second  // 心跳间隔
-	ReconnectInterval = 5 * time.Second   // 重连间隔
-	MaxReconnectCount = 10                // 最大重连次数
+	ReconnectInterval = 3 * time.Second   // 重连间隔
+	MaxReconnectCount = 100               // 最大重连次数
 	ConnectTimeout    = 100 * time.Second // 连接超时时间
 
 	// 消息配置
@@ -76,7 +85,7 @@ type FileState struct {
 
 // WebSocket消息结构体
 type Request struct {
-	Id        int         `json:"id"`        // 消息ID
+	Id        int64       `json:"id"`        // 消息ID
 	Ver       string      `json:"ver"`       // 版本号
 	Path      string      `json:"path"`      // 请求命令字
 	Data      interface{} `json:"data"`      // 数据 JSON

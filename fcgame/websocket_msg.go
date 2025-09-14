@@ -3,7 +3,6 @@ package fcgame
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/sjzar/chatlog/internal/model"
 	"go.uber.org/zap"
@@ -145,6 +144,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 		lastID = 0
 	}
 
+	//联系人DB
 	cdb, err := GetGormDB(CONTACT_DB)
 	if err != nil {
 		dp.logger.Error("open contact db fail.", zap.Error(err))
@@ -202,6 +202,8 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 			break
 		}
 
+		subTable := strings.TrimPrefix(tableName, "Msg_")
+
 		// 处理每个消息
 		for _, msgResult := range messages {
 			// 转换为FcgMessage格式
@@ -217,10 +219,10 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 				MessageContent:    msgResult.MessageContent,
 				Status:            msgResult.Status,
 				RecognitionStatus: false,
-				MessageNo:         fmt.Sprintf("MSG_%d_%d", time.Now().UnixNano(), msgResult.LocalId),
+				MessageNo:         fmt.Sprintf("MSG_%s_%d", subTable, msgResult.LocalId),
 				TaskList:          "",
 				Owner:             account,
-				Hash:              strings.TrimPrefix(tableName, "Msg_"),
+				Hash:              subTable,
 			}
 
 			var contact Contact

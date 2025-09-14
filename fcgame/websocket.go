@@ -45,7 +45,8 @@ type WebSocketClient struct {
 	messageStop   chan bool
 	errorChan     chan error
 	logger        *zap.Logger
-	writeMtx      sync.Mutex // 新增: 用来保护写操作
+	writeMtx      sync.Mutex  // 新增: 用来保护写操作
+	sendChan      chan []byte // 新增: 写协程使用的消息队列
 }
 
 // 创建新的WebSocket客户端
@@ -60,6 +61,7 @@ func NewWebSocketClient(config ClientConfig, log *zap.Logger) *WebSocketClient {
 		messageStop:   make(chan bool, 1),
 		errorChan:     make(chan error, 10),
 		logger:        log,
+		sendChan:      make(chan []byte, MaxMessageQueue), // 缓冲区可调
 	}
 }
 
@@ -103,11 +105,12 @@ func (client *WebSocketClient) Connect() error {
 	if err != nil {
 		if resp != nil {
 			client.logger.Error("Socket连接失败", zap.Int("resp.StatusCode", resp.StatusCode), zap.Int("resp.StatusCode", resp.StatusCode))
-			if resp.StatusCode == 401 {
+			switch resp.StatusCode {
+			case 401:
 				return fmt.Errorf("认证失败: 请检查JWT Token是否正确")
-			} else if resp.StatusCode == 403 {
+			case 403:
 				return fmt.Errorf("IP被禁止或权限不足")
-			} else if resp.StatusCode == 429 {
+			case 429:
 				return fmt.Errorf("请求过于频繁，被限流")
 			}
 		}
@@ -126,10 +129,6 @@ func (client *WebSocketClient) Connect() error {
 
 	// 设置连接参数
 	client.conn.SetReadLimit(MaxMessageSize)
-	// client.conn.SetPongHandler(func(appData string) error {
-	// 	return client.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
-	// })
-
 	return nil
 }
 
@@ -150,7 +149,7 @@ func (client *WebSocketClient) ConnectWithRetry() error {
 		}
 	}
 
-	return fmt.Errorf("达到最大重连次数 (%d)，连接失败", client.config.MaxReconnect)
+	return fmt.Errorf("达到最大重连次数 (%d)，连接失败, 请联系管理员处理。", client.config.MaxReconnect)
 }
 
 // 检查连接状态
@@ -194,7 +193,7 @@ func (client *WebSocketClient) write(msgType int, data []byte) error {
 // 发送消息到服务器
 func (client *WebSocketClient) SendMessage(path string, data interface{}) error {
 	request := Request{
-		Id:        client.msgID,
+		Id:        Snowflake.Generate().Int64(),
 		Ver:       client.config.Version,
 		Path:      path,
 		Data:      data,
@@ -207,7 +206,9 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 		return fmt.Errorf("序列化消息失败: %v", err)
 	}
 
-	return client.write(websocket.TextMessage, msgBytes)
+	// return client.write(websocket.TextMessage, msgBytes)
+	client.sendChan <- msgBytes
+	return nil
 }
 
 func (client *WebSocketClient) SendContact(contact FcgContact) error {
@@ -220,19 +221,22 @@ func (client *WebSocketClient) SendClientLog(log any) error {
 	return client.SendMessage("clientlog", log)
 }
 
-// 发送心跳
+// 发送心跳（Ping）
 func (client *WebSocketClient) SendHeartbeat() error {
-	return client.write(websocket.PingMessage, nil)
+	// return client.write(websocket.PingMessage, nil)
+	client.sendChan <- websocket.FormatCloseMessage(websocket.PingMessage, "")
+	return nil
 }
 
 // 发送文本消息
-func (client *WebSocketClient) SendTextMessage(text string) error {
-	return client.write(websocket.TextMessage, []byte(text))
+func (client *WebSocketClient) SendTextMessage(text []byte) error {
+	// return client.write(websocket.TextMessage, []byte(text))
+	client.sendChan <- text
+	return nil
 }
 
 // 监听服务器消息
 func (client *WebSocketClient) ListenMessages() {
-	client.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 
 	// 设置 PongHandler
 	client.conn.SetPongHandler(func(appData string) error {
@@ -258,17 +262,22 @@ func (client *WebSocketClient) ListenMessages() {
 
 			// 如果需要自动重连
 			if client.config.Reconnect && !client.isShutdown {
-				go client.handleReconnect()
+				err = client.ConnectWithRetry()
+				if err != nil {
+					fmt.Println("自动重连失败: ", err)
+					return
+				}
+			} else {
+				return
 			}
-			return
 		}
 
 		// 解析响应消息
 		var response Response
 		err = json.Unmarshal(message, &response)
 		if err != nil {
-			client.logger.Error("parsing response message error: ", zap.Error(err))
-			//fmt.Println("parsing response message error: ", message)
+			client.logger.Error("parsing response message error: ", zap.Error(err), zap.Any("response", response))
+			fmt.Println("parsing response message error: ", message)
 		} else {
 			if response.Data != nil {
 				dataBytes, _ := json.MarshalIndent(response.Data, "", "  ")
@@ -276,29 +285,6 @@ func (client *WebSocketClient) ListenMessages() {
 			}
 		}
 	}
-}
-
-// 处理重连逻辑
-func (client *WebSocketClient) handleReconnect() {
-	if client.isShutdown {
-		return
-	}
-
-	fmt.Println("🔄 尝试重连...")
-	time.Sleep(client.config.ReconnectWait)
-
-	err := client.ConnectWithRetry()
-	if err != nil {
-		fmt.Println("❗ 重连失败: %v", err)
-		client.errorChan <- err
-		return
-	}
-
-	fmt.Println("✅ 重连成功！")
-	// 重新启动消息监听
-	go client.ListenMessages()
-	// 重新启动心跳
-	go client.StartHeartbeat()
 }
 
 // 启动心跳检测
@@ -356,22 +342,57 @@ func (client *WebSocketClient) GetStats() map[string]interface{} {
 
 // 关闭连接
 func (client *WebSocketClient) Close() {
-	client.isShutdown = true
-	client.isConnected = false
+	// client.isShutdown = true
+	// client.isConnected = false
 
-	// 停止心跳和消息监听
-	client.StopHeartbeat()
-	client.StopListening()
+	// // 停止心跳和消息监听
+	// client.StopHeartbeat()
+	// client.StopListening()
 
-	if client.conn != nil {
-		// 发送关闭消息
-		client.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "客户端主动关闭"))
-		client.conn.Close()
-		fmt.Println("🔌 WebSocket连接已关闭")
-	}
+	// if client.conn != nil {
+	// 	// 发送关闭消息
+	// 	client.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "客户端主动关闭"))
+	// 	client.conn.Close()
+	// 	fmt.Println("🔌 WebSocket连接已关闭")
+	// }
 
 	// 关闭通道
 	close(client.heartbeatStop)
 	close(client.messageStop)
 	close(client.errorChan)
+
+	client.isShutdown = true
+	client.isConnected = false
+
+	client.StopHeartbeat()
+	client.StopListening()
+
+	if client.conn != nil {
+		client.conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "客户端主动关闭"))
+		client.conn.Close()
+		fmt.Println("🔌 WebSocket连接已关闭")
+	}
+
+	close(client.sendChan) // 新增: 停止写协程
+	close(client.heartbeatStop)
+	close(client.messageStop)
+	close(client.errorChan)
+}
+
+// 写协程: 顺序写出所有消息
+func (client *WebSocketClient) StartWriter() {
+	for msg := range client.sendChan {
+		if !client.IsConnected() {
+			return
+		}
+		client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
+		err := client.conn.WriteMessage(websocket.TextMessage, msg)
+		client.conn.SetWriteDeadline(time.Time{}) // 清除超时
+		if err != nil {
+			client.logger.Error("发送消息失败:", zap.Error(err))
+			client.isConnected = false
+			return
+		}
+	}
 }

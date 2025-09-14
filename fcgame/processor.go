@@ -61,6 +61,8 @@ func (dp *DataProcessor) InitializeWebSocket() error {
 	// go dp.wsClient.ListenMessages()
 	SafeRun(dp.wsClient.ListenMessages)
 
+	SafeRun(dp.wsClient.StartWriter)
+
 	// 只需要一方发 Ping，通常是服务端。客户端不用维持心跳，不要在双方都发心跳，否则会互相干扰
 	// go dp.wsClient.StartHeartbeat()
 
@@ -269,18 +271,18 @@ func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbF
 		return
 	}
 
-	dp.logger.Info("处理消息数据库", zap.String("file", filepath.Base(dbFile)))
+	dp.logger.Debug("处理消息数据库", zap.String("file", filepath.Base(dbFile)))
 
 	// 解密到临时文件
 	tempDBFile, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key, false)
 	if err != nil {
-		dp.logger.Error("解密消息数据库失败", zap.Error(err))
+		dp.logger.Debug("解密消息数据库失败", zap.Error(err))
 		return
 	}
 	// 确保删除临时文件
 	defer func() {
 		if err := os.Remove(tempDBFile); err != nil {
-			dp.logger.Warn("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
+			dp.logger.Info("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
 		} else {
 			dp.logger.Debug("临时文件已删除", zap.String("file", tempDBFile))
 		}
