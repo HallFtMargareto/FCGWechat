@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -44,6 +45,7 @@ type WebSocketClient struct {
 	messageStop   chan bool
 	errorChan     chan error
 	logger        *zap.Logger
+	writeMtx      sync.Mutex // 新增: 用来保护写操作
 }
 
 // 创建新的WebSocket客户端
@@ -168,12 +170,29 @@ func (client *WebSocketClient) GetConnectionInfo() string {
 		client.config.Path)
 }
 
-// 发送消息到服务器
-func (client *WebSocketClient) SendMessage(path string, data interface{}) error {
-	if !client.IsConnected() {
+// 统一的写方法（带写锁 & 超时控制）
+func (client *WebSocketClient) write(msgType int, data []byte) error {
+	client.writeMtx.Lock()
+	defer client.writeMtx.Unlock()
+
+	if !client.isConnected {
 		return fmt.Errorf("连接未建立")
 	}
 
+	// 设置写超时
+	client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
+	err := client.conn.WriteMessage(msgType, data)
+	client.conn.SetWriteDeadline(time.Time{}) // 清除超时
+
+	if err != nil {
+		client.isConnected = false
+		return fmt.Errorf("写入消息失败: %v", err)
+	}
+	return nil
+}
+
+// 发送消息到服务器
+func (client *WebSocketClient) SendMessage(path string, data interface{}) error {
 	request := Request{
 		Id:        client.msgID,
 		Ver:       client.config.Version,
@@ -181,7 +200,6 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 		Data:      data,
 		Timestamp: time.Now().Unix(),
 	}
-
 	client.msgID++
 
 	msgBytes, err := json.Marshal(request)
@@ -189,26 +207,12 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 		return fmt.Errorf("序列化消息失败: %v", err)
 	}
 
-	// 设置发送超时
-	client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
-	err = client.conn.WriteMessage(websocket.TextMessage, msgBytes)
-	// fmt.Println("发送消息:", string(msgBytes))
-	if err != nil {
-		client.isConnected = false
-		return fmt.Errorf("发送消息失败: %v", err)
-	}
-
-	// 清除发送超时
-	client.conn.SetWriteDeadline(time.Time{})
-	return nil
+	return client.write(websocket.TextMessage, msgBytes)
 }
 
-// 发送联系人数据
 func (client *WebSocketClient) SendContact(contact FcgContact) error {
 	return client.SendMessage("fccontact", contact)
 }
-
-// 发送消息数据
 func (client *WebSocketClient) SendFcgMessage(message FcgMessage) error {
 	return client.SendMessage("fcmessage", message)
 }
@@ -218,36 +222,16 @@ func (client *WebSocketClient) SendClientLog(log any) error {
 
 // 发送心跳
 func (client *WebSocketClient) SendHeartbeat() error {
-	if !client.IsConnected() {
-		return fmt.Errorf("连接未建立")
-	}
-	err := client.conn.WriteMessage(websocket.PingMessage, nil)
-	// fmt.Println("发送PING消息 ", err)
-	if err != nil {
-		client.isConnected = false
-		return fmt.Errorf("发送心跳失败: %v", err)
-	}
-	client.conn.SetWriteDeadline(time.Time{})
-	return nil
+	return client.write(websocket.PingMessage, nil)
+}
+
+// 发送文本消息
+func (client *WebSocketClient) SendTextMessage(text string) error {
+	return client.write(websocket.TextMessage, []byte(text))
 }
 
 // 监听服务器消息
 func (client *WebSocketClient) ListenMessages() {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			var err error
-			if e, ok := recovered.(error); ok {
-				err = e
-			} else {
-				err = fmt.Errorf("unexpected panic: %v", recovered)
-			}
-			client.logger.Error("panic in ListenMessages", zap.Error(err))
-
-			fmt.Println("消息监听出现panic: ", err)
-		}
-		client.isConnected = false
-	}()
-
 	client.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 
 	// 设置 PongHandler
@@ -259,7 +243,6 @@ func (client *WebSocketClient) ListenMessages() {
 
 	for client.IsConnected() && !client.isShutdown {
 		// 设置读取超时
-
 		_, message, err := client.conn.ReadMessage()
 		if err != nil {
 			client.logger.Error("读取消息错误:", zap.Error(err))
@@ -278,11 +261,6 @@ func (client *WebSocketClient) ListenMessages() {
 				go client.handleReconnect()
 			}
 			return
-		}
-
-		// 处理pong消息
-		if string(message) == "pong" {
-			continue
 		}
 
 		// 解析响应消息
@@ -363,22 +341,6 @@ func (client *WebSocketClient) StopListening() {
 	case client.messageStop <- true:
 	default:
 	}
-}
-
-// 发送文本消息
-func (client *WebSocketClient) SendTextMessage(text string) error {
-	if !client.IsConnected() {
-		return fmt.Errorf("连接未建立")
-	}
-
-	client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
-	err := client.conn.WriteMessage(websocket.TextMessage, []byte(text))
-	if err != nil {
-		client.isConnected = false
-		return fmt.Errorf("发送文本消息失败: %v", err)
-	}
-	client.conn.SetWriteDeadline(time.Time{})
-	return nil
 }
 
 // 获取统计信息

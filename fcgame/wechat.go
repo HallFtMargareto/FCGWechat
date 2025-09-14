@@ -179,48 +179,94 @@ func (wm *WechatManager) GetTargetDatabaseFiles(account AccountInfo) (contactFil
 }
 
 // DecryptToTempFile 解密数据库到临时文件
-func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, key string) (string, error) {
-	// 创建临时文件进行解密
-	tempFile, err := os.CreateTemp("", "chatlog_decrypt_*.db")
-	if err != nil {
-		return "", fmt.Errorf("创建临时文件失败: %v", err)
-	}
-	tempPath := tempFile.Name()
-	tempFile.Close()
-
-	// 解密到临时文件
-	outputFile, err := os.Create(tempPath)
-	if err != nil {
-		os.Remove(tempPath)
-		return "", fmt.Errorf("创建输出文件失败: %v", err)
-	}
-
-	ctx := context.Background()
-	err = decryptor.Decrypt(ctx, dbFile, key, outputFile)
-	outputFile.Close()
-
-	if err != nil {
-		// 如果已经解密，直接复制文件
-		if strings.Contains(err.Error(), "already decrypted") {
-			Logger.Debug("文件已解密，直接复制", zap.String("file", filepath.Base(dbFile)))
-			data, readErr := os.ReadFile(dbFile)
-			if readErr != nil {
-				os.Remove(tempPath)
-				return "", fmt.Errorf("读取文件失败: %v", readErr)
-			}
-			if writeErr := os.WriteFile(tempPath, data, 0644); writeErr != nil {
-				os.Remove(tempPath)
-				return "", fmt.Errorf("写入临时文件失败: %v", writeErr)
-			}
-		} else {
-			os.Remove(tempPath)
-			return "", fmt.Errorf("解密失败: %v", err)
+func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, key string, save bool) (string, error) {
+	if save {
+		// 当save为true时，将文件解密并保存到程序当前运行的目录，文件名改为fcgame_lxr.dat
+		currentDir, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("获取当前目录失败: %v", err)
 		}
+
+		targetPath := filepath.Join(currentDir, CONTACT_DB)
+
+		// 创建目标文件
+		outputFile, err := os.Create(targetPath)
+		if err != nil {
+			return "", fmt.Errorf("创建目标文件失败: %v", err)
+		}
+
+		ctx := context.Background()
+		err = decryptor.Decrypt(ctx, dbFile, key, outputFile)
+		outputFile.Close()
+
+		if err != nil {
+			// 如果已经解密，直接复制文件
+			if strings.Contains(err.Error(), "already decrypted") {
+				Logger.Debug("文件已解密，直接复制", zap.String("file", filepath.Base(dbFile)))
+				data, readErr := os.ReadFile(dbFile)
+				if readErr != nil {
+					os.Remove(targetPath)
+					return "", fmt.Errorf("读取文件失败: %v", readErr)
+				}
+				if writeErr := os.WriteFile(targetPath, data, 0644); writeErr != nil {
+					os.Remove(targetPath)
+					return "", fmt.Errorf("写入目标文件失败: %v", writeErr)
+				}
+			} else {
+				os.Remove(targetPath)
+				return "", fmt.Errorf("解密失败: %v", err)
+			}
+		}
+
+		Logger.Debug("数据库解密到指定文件成功",
+			zap.String("source", filepath.Base(dbFile)),
+			zap.String("target", filepath.Base(targetPath)))
+
+		return targetPath, nil
+	} else {
+		// 当save为false时，保持原来的逻辑
+		// 创建临时文件进行解密
+		tempFile, err := os.CreateTemp("", "fcgame_decrypt_*.db")
+		if err != nil {
+			return "", fmt.Errorf("创建临时文件失败: %v", err)
+		}
+		tempPath := tempFile.Name()
+		tempFile.Close()
+
+		// 解密到临时文件
+		outputFile, err := os.Create(tempPath)
+		if err != nil {
+			os.Remove(tempPath)
+			return "", fmt.Errorf("创建输出文件失败: %v", err)
+		}
+
+		ctx := context.Background()
+		err = decryptor.Decrypt(ctx, dbFile, key, outputFile)
+		outputFile.Close()
+
+		if err != nil {
+			// 如果已经解密，直接复制文件
+			if strings.Contains(err.Error(), "already decrypted") {
+				Logger.Debug("文件已解密，直接复制", zap.String("file", filepath.Base(dbFile)))
+				data, readErr := os.ReadFile(dbFile)
+				if readErr != nil {
+					os.Remove(tempPath)
+					return "", fmt.Errorf("读取文件失败: %v", readErr)
+				}
+				if writeErr := os.WriteFile(tempPath, data, 0644); writeErr != nil {
+					os.Remove(tempPath)
+					return "", fmt.Errorf("写入临时文件失败: %v", writeErr)
+				}
+			} else {
+				os.Remove(tempPath)
+				return "", fmt.Errorf("解密失败: %v", err)
+			}
+		}
+
+		Logger.Debug("数据库解密到临时文件成功",
+			zap.String("source", filepath.Base(dbFile)),
+			zap.String("temp", filepath.Base(tempPath)))
+
+		return tempPath, nil
 	}
-
-	Logger.Debug("数据库解密到临时文件成功",
-		zap.String("source", filepath.Base(dbFile)),
-		zap.String("temp", filepath.Base(tempPath)))
-
-	return tempPath, nil
 }

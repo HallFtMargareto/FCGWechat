@@ -9,16 +9,20 @@ const (
 
 	// 默认处理最新的20个数据库
 	MaxMessageDBCount = 20
+
+	TimeLayout = "2006-01-02 15:04:05"
+
+	CONTACT_DB = "fcgame_lxr.dat"
 )
 
 // WEBSOCKET配置
 const (
 	// WebSocket服务器配置
-	// WSServer = "127.0.0.1" // WebSocket服务器地址
-	WSServer = "115.190.130.54" // WebSocket服务器地址
-	WSPort   = "888"            // WebSocket服务器端口
-	WSPath   = "/websocket"     // WebSocket路径
-	WSScheme = "ws"             // WebSocket协议 (ws 或 wss)
+	WSServer = "127.0.0.1" // WebSocket服务器地址
+	// WSServer = "115.190.130.54" // WebSocket服务器地址
+	WSPort   = "888"        // WebSocket服务器端口
+	WSPath   = "/websocket" // WebSocket路径
+	WSScheme = "ws"         // WebSocket协议 (ws 或 wss)
 
 	// 认证配置
 	RequireAuth  = false // 是否需要JWT认证

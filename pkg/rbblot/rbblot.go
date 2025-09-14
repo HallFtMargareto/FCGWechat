@@ -9,7 +9,7 @@ type RBblotCore struct {
 }
 
 func NewBblot(memory int) *RBblotCore {
-	db, err := bbolt.Open("rtpsystem.dat", 0600, &bbolt.Options{
+	db, err := bbolt.Open("fcgame.dat", 0600, &bbolt.Options{
 		InitialMmapSize: memory * 1024 * 1024,
 	})
 	if err != nil {

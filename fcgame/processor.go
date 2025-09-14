@@ -58,8 +58,11 @@ func (dp *DataProcessor) InitializeWebSocket() error {
 	SetWebSocketClient(dp.wsClient)
 
 	// 启动消息监听和心跳
-	go dp.wsClient.ListenMessages()
-	go dp.wsClient.StartHeartbeat()
+	// go dp.wsClient.ListenMessages()
+	SafeRun(dp.wsClient.ListenMessages)
+
+	// 只需要一方发 Ping，通常是服务端。客户端不用维持心跳，不要在双方都发心跳，否则会互相干扰
+	// go dp.wsClient.StartHeartbeat()
 
 	return nil
 }
@@ -106,18 +109,6 @@ func (dp *DataProcessor) SaveDatabaseState() {
 
 	dp.rbblot.Store("database", "state", data)
 	dp.logger.Debug("数据库状态已保存")
-}
-
-// ProcessAllAccounts 处理所有账户
-func (dp *DataProcessor) ProcessAllAccounts() {
-	// 立即执行一次处理
-	for k, account := range dp.accounts {
-		if idx := strings.LastIndex(account.Name, "_"); idx != -1 {
-			account.SortName = account.Name[:idx]
-			dp.accounts[k].SortName = account.SortName
-		}
-		dp.processAccountData(account)
-	}
 }
 
 // StartPeriodicProcessing 启动定期处理
@@ -192,6 +183,18 @@ func (dp *DataProcessor) getAndSaveAccounts() []AccountInfo {
 	return accounts
 }
 
+// ProcessAllAccounts 处理所有账户
+func (dp *DataProcessor) ProcessAllAccounts() {
+	// 立即执行一次处理
+	for k, account := range dp.accounts {
+		if idx := strings.LastIndex(account.Name, "_"); idx != -1 {
+			account.SortName = account.Name[:idx]
+			dp.accounts[k].SortName = account.SortName
+		}
+		dp.processAccountData(account)
+	}
+}
+
 // processAccountData 处理账户数据（解密、读取、发送）
 func (dp *DataProcessor) processAccountData(account AccountInfo) {
 	dp.logger.Info("开始处理账户", zap.String("account", account.Name))
@@ -222,6 +225,72 @@ func (dp *DataProcessor) processAccountData(account AccountInfo) {
 	}
 
 	dp.logger.Info("账户处理完成", zap.String("account", account.Name))
+}
+
+// ProcessContactDatabase 处理联系人数据库
+func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) error {
+	// 检查文件是否需要更新
+	if !dp.needsUpdate(dbFile) {
+		dp.logger.Debug("联系人数据库无更新", zap.String("file", filepath.Base(dbFile)))
+		return nil
+	}
+
+	dp.logger.Info("处理联系人数据库", zap.String("file", filepath.Base(dbFile)))
+
+	// 解密到临时文件
+	_, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key, true)
+	if err != nil {
+		dp.logger.Error("解密联系人数据库失败", zap.Error(err))
+		return err
+	}
+	// 确保删除临时文件
+	// defer func() {
+	// 	if err := os.Remove(tempDBFile); err != nil {
+	// 		dp.logger.Warn("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
+	// 	} else {
+	// 		dp.logger.Debug("临时文件已删除", zap.String("file", tempDBFile))
+	// 	}
+	// }()
+
+	// 读取并发送联系人数据
+	//err = dp.ProcessContactData(tempDBFile, account.SortName)
+
+	// 更新文件状态
+	dp.updateFileState(dbFile)
+
+	return err
+}
+
+// ProcessMessageDatabase 处理消息数据库
+func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) {
+	// 检查文件是否需要更新
+	if !dp.needsUpdate(dbFile) {
+		dp.logger.Debug("消息数据库无更新", zap.String("file", filepath.Base(dbFile)))
+		return
+	}
+
+	dp.logger.Info("处理消息数据库", zap.String("file", filepath.Base(dbFile)))
+
+	// 解密到临时文件
+	tempDBFile, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key, false)
+	if err != nil {
+		dp.logger.Error("解密消息数据库失败", zap.Error(err))
+		return
+	}
+	// 确保删除临时文件
+	defer func() {
+		if err := os.Remove(tempDBFile); err != nil {
+			dp.logger.Warn("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
+		} else {
+			dp.logger.Debug("临时文件已删除", zap.String("file", tempDBFile))
+		}
+	}()
+
+	// 读取并发送消息数据
+	dp.ProcessMessageData(tempDBFile, account.SortName, dbFile)
+
+	// 更新文件状态
+	dp.updateFileState(dbFile)
 }
 
 // needsUpdate 检查文件是否需要更新
@@ -267,70 +336,4 @@ func (dp *DataProcessor) updateFileState(filePath string) {
 		LastProcTime: time.Now(),
 		Size:         fileInfo.Size(),
 	}
-}
-
-// ProcessContactDatabase 处理联系人数据库
-func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) error {
-	// 检查文件是否需要更新
-	if !dp.needsUpdate(dbFile) {
-		dp.logger.Debug("联系人数据库无更新", zap.String("file", filepath.Base(dbFile)))
-		return nil
-	}
-
-	dp.logger.Info("处理联系人数据库", zap.String("file", filepath.Base(dbFile)))
-
-	// 解密到临时文件
-	tempDBFile, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key)
-	if err != nil {
-		dp.logger.Error("解密联系人数据库失败", zap.Error(err))
-		return err
-	}
-	// 确保删除临时文件
-	defer func() {
-		if err := os.Remove(tempDBFile); err != nil {
-			dp.logger.Warn("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
-		} else {
-			dp.logger.Debug("临时文件已删除", zap.String("file", tempDBFile))
-		}
-	}()
-
-	// 读取并发送联系人数据
-	err = dp.ProcessContactData(tempDBFile, account.SortName)
-
-	// 更新文件状态
-	dp.updateFileState(dbFile)
-
-	return err
-}
-
-// ProcessMessageDatabase 处理消息数据库
-func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) {
-	// 检查文件是否需要更新
-	if !dp.needsUpdate(dbFile) {
-		dp.logger.Debug("消息数据库无更新", zap.String("file", filepath.Base(dbFile)))
-		return
-	}
-
-	dp.logger.Info("处理消息数据库", zap.String("file", filepath.Base(dbFile)))
-
-	// 解密到临时文件
-	tempDBFile, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key)
-	if err != nil {
-		dp.logger.Error("解密消息数据库失败", zap.Error(err))
-		return
-	}
-	// 确保删除临时文件
-	defer func() {
-		if err := os.Remove(tempDBFile); err != nil {
-			dp.logger.Warn("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
-		} else {
-			dp.logger.Debug("临时文件已删除", zap.String("file", tempDBFile))
-		}
-	}()
-
-	// 读取并发送消息数据
-	dp.ProcessMessageData(tempDBFile, account.SortName, dbFile)
-
-	// 更新文件状态
-	dp.updateFileState(dbFile)
 }
