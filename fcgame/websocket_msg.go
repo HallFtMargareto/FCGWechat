@@ -3,6 +3,7 @@ package fcgame
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/sjzar/chatlog/internal/model"
 	"go.uber.org/zap"
@@ -134,6 +135,14 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 
 // processMessageTableWithGORM 使用GORM处理单个消息表
 func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbFile string, account string) int {
+
+	// 获取当天零点
+	now := time.Now()
+	today := time.Date(
+		now.Year(), now.Month(), now.Day(),
+		0, 0, 0, 0, now.Location(),
+	)
+
 	// 分批处理消息数据，每次最多500条
 	const batchSize = 500
 	totalCount := 0
@@ -175,6 +184,10 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 		// 只获取文本记录
 		conditions = append(conditions, "m.local_type = ?")
 		args = append(args, model.MessageTypeText)
+
+		// 只获取当天的记录
+		conditions = append(conditions, "m.create_time >= ?")
+		args = append(args, today.Unix())
 
 		// 添加 local_id 条件（防重复查询）
 		if lastID > 0 {
