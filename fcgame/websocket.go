@@ -445,6 +445,8 @@ func (client *WebSocketClient) Close() {
 func (client *WebSocketClient) StartWriter() {
 	for msg := range client.sendChan {
 		if !client.IsConnected() {
+			client.logger.Error("连接已断开")
+			client.isConnected = false
 			return
 		}
 		client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))

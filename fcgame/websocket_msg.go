@@ -1,11 +1,13 @@
 package fcgame
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/sjzar/chatlog/internal/model"
+	"github.com/sjzar/chatlog/pkg/util/zstd"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -219,6 +221,15 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 
 		// 处理每个消息
 		for _, msgResult := range messages {
+			content := ""
+			if bytes.HasPrefix(msgResult.MessageContent, []byte{0x28, 0xb5, 0x2f, 0xfd}) {
+				if b, err := zstd.Decompress(msgResult.MessageContent); err == nil {
+					content = string(b)
+				}
+			} else {
+				content = string(msgResult.MessageContent)
+			}
+
 			// 转换为FcgMessage格式
 			message := FcgMessage{
 				TenantId:          1,
@@ -229,7 +240,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 				LocalType:         msgResult.LocalType,
 				CreateTime:        msgResult.CreateTime,
 				RealSenderId:      msgResult.RealSenderId,
-				MessageContent:    msgResult.MessageContent,
+				MessageContent:    content,
 				Status:            msgResult.Status,
 				RecognitionStatus: false,
 				MessageNo:         fmt.Sprintf("MSG_%s_%d", subTable, msgResult.LocalId),

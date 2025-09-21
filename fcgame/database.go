@@ -36,7 +36,7 @@ type Message struct {
 	LocalType      uint   `gorm:"column:local_type"`
 	CreateTime     uint64 `gorm:"column:create_time"`
 	RealSenderId   uint64 `gorm:"column:real_sender_id"`
-	MessageContent string `gorm:"column:message_content"`
+	MessageContent []byte `gorm:"column:message_content"`
 	Status         uint   `gorm:"column:status"`
 }
 
