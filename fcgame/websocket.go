@@ -444,6 +444,10 @@ func (client *WebSocketClient) Close() {
 // 写协程: 顺序写出所有消息
 func (client *WebSocketClient) StartWriter() {
 	for msg := range client.sendChan {
+		if len(msg) == 0 {
+			fmt.Println("空消息")
+			continue
+		}
 		if !client.IsConnected() {
 			client.logger.Error("连接已断开")
 			client.isConnected = false

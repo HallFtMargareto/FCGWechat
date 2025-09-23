@@ -27,17 +27,18 @@ const (
 // WEBSOCKET配置
 const (
 	// WebSocket服务器配置
-	WSServer = "127.0.0.1" // WebSocket服务器地址
-	// WSServer = "115.190.130.54" // WebSocket服务器地址
-	WSPort   = "888"        // WebSocket服务器端口
-	WSPath   = "/websocket" // WebSocket路径
-	WSScheme = "ws"         // WebSocket协议 (ws 或 wss)
+	// WSServer = "127.0.0.1" // WebSocket服务器地址
+	WSServer = "115.190.130.54" // WebSocket服务器地址
+	WSPort   = "888"            // WebSocket服务器端口
+	WSPath   = "/websocket"     // WebSocket路径
+	WSScheme = "ws"             // WebSocket协议 (ws 或 wss)
 
 	// 认证配置
 	// 是否需要JWT认证
 	RequireAuth = true
 	// 默认JWT Token (如果需要认证)
-	DefaultToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiYWNjb3VudCI6IiIsIm5hbWUiOiJob3N0IiwibW9kdWxlIjoxLCJleHAiOjE3NjE1MDQyMzUsImlzcyI6ImZjZ2FtZSJ9.xaRC2M1cjsNXrf-8c8e_i5pW-htVJJW5aQGoKluAGHw"
+	// DefaultToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwiYWNjb3VudCI6IiIsIm5hbWUiOiJob3N0IiwibW9kdWxlIjoxLCJleHAiOjE3NjE1MDQyMzUsImlzcyI6ImZjZ2FtZSJ9.xaRC2M1cjsNXrf-8c8e_i5pW-htVJJW5aQGoKluAGHw"
+	DefaultToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MCwiYWNjb3VudCI6IiIsIm5hbWUiOiJob3N0IiwibW9kdWxlIjoxLCJleHAiOjE3NjIwNzU3MzgsImlzcyI6ImZjZ2FtZSJ9.W2bfc9nOpx5nNGctH_cVokxNY0QQPNJIsAR-GTwDG1I"
 
 	// 客户端配置
 	ClientVersion     = "1.0.0"           // 客户端版本
