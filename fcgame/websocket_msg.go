@@ -242,7 +242,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 				RealSenderId:      msgResult.RealSenderId,
 				MessageContent:    content,
 				Status:            msgResult.Status,
-				RecognitionStatus: false,
+				RecognitionStatus: 0,
 				MessageNo:         fmt.Sprintf("MSG_%s_%d", subTable, msgResult.LocalId),
 				TaskList:          "",
 				Owner:             account,

@@ -1,12 +1,18 @@
 package fcgame
 
 import (
+	"sync"
 	"time"
 
 	"github.com/bwmarrin/snowflake"
 )
 
-var Snowflake *snowflake.Node
+var (
+	// Snowflake 全局ID生成器实例
+	Snowflake *snowflake.Node
+	// snowflakeMutex 保护Snowflake的并发访问
+	snowflakeMutex sync.Mutex
+)
 
 // 基础配置
 const (
@@ -135,7 +141,7 @@ type FcgMessage struct {
 	RealSenderId      uint64 `json:"real_sender_id"`
 	MessageContent    string `json:"message_content"`
 	Status            uint   `json:"status"`
-	RecognitionStatus bool   `json:"recognition_status"`
+	RecognitionStatus int    `json:"recognition_status"`
 	MessageNo         string `json:"message_no"`
 	TaskList          string `json:"task_list"`
 	Owner             string `json:"owner"`

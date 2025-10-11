@@ -197,6 +197,8 @@ func (dp *DataProcessor) ProcessAllAccounts() {
 		}
 		dp.processAccountData(account)
 	}
+
+	dp.StartPeriodicProcessing()
 }
 
 // processAccountData 处理账户数据（解密、读取、发送）

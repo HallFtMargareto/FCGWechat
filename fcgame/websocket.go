@@ -248,8 +248,13 @@ func (client *WebSocketClient) write(msgType int, data []byte) error {
 
 // 发送消息到服务器
 func (client *WebSocketClient) SendMessage(path string, data interface{}) error {
+	// 使用互斥锁保护Snowflake的并发访问
+	snowflakeMutex.Lock()
+	messageId := Snowflake.Generate().Int64()
+	snowflakeMutex.Unlock()
+	
 	request := Request{
-		Id:        Snowflake.Generate().Int64(),
+		Id:        messageId,
 		Ver:       client.config.Version,
 		Path:      path,
 		Data:      data,

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/sjzar/chatlog/fcgame"
@@ -24,7 +26,26 @@ func main() {
 	// 运行解密发送任务
 	manager.Run()
 
-	Wait()
+	// fcgame.CreateApp(manager)
+
+	scanner := bufio.NewScanner(os.Stdin)
+
+	for {
+		fmt.Print("请输入口令 (exit退出): ")
+		if !scanner.Scan() { // 检查是否有输入
+			break
+		}
+		text := strings.TrimSpace(scanner.Text())
+
+		if text == "" {
+			continue
+		}
+		if text == "exit" {
+			fmt.Println("程序结束")
+			break
+		}
+		manager.Send(text)
+	}
 }
 
 // 程序挂起
