@@ -80,37 +80,55 @@ func (client *WebSocketClient) Run() {
 		}
 
 		// 2. 连接成功，启动所有协程
-		var wg sync.WaitGroup
-		wg.Add(2) // 读、写、心跳
+		// 使用一个 channel 来监听任意协程退出
+		goroutineDone := make(chan bool, 2)
 
 		SafeRun(func() {
-			defer wg.Done()
 			client.StartWriter()
 			fmt.Println("StartWriter 协程已退出。")
+			goroutineDone <- true
 		})
 
 		SafeRun(func() {
-			defer wg.Done()
 			client.ListenMessages()
 			fmt.Println("ListenMessages 协程已退出。")
+			goroutineDone <- true
 		})
 
 		// go func() {
-		// 	defer wg.Done()
 		// 	client.StartHeartbeat()
 		// 	client.logger.Info("StartHeartbeat 协程已退出。")
+		// 	goroutineDone <- true
 		// }()
 		//client.logger.Info("客户端已连接，读、写、心跳协程已启动。")
 
-		// 3. 等待任何一个协程退出（意味着连接断开）
-		wg.Wait()
-		fmt.Println("连接已断开，所有相关协程已停止。")
+		// 3. 等待任意一个协程退出（意味着连接断开）
+		<-goroutineDone
+		fmt.Println("检测到协程退出，连接已断开，准备重连。")
 
-		// 4. 清理旧的连接
+		// 4. 清理旧的连接和协程
+		client.isConnected = false // 标记连接为断开状态
+
+		// 关闭连接，这会导致其他协程也退出
 		if client.conn != nil {
 			client.conn.Close()
+			client.conn = nil
 		}
-		// client.StopHeartbeat() // 确保心跳协程的资源被释放
+
+		// 关闭sendChan来停止写协程（如果还没有停止的话）
+		select {
+		case <-client.sendChan:
+			// channel已经关闭或为空
+		default:
+			// 尝试发送一个空消息来触发写协程退出检查
+			select {
+			case client.sendChan <- []byte{}:
+			default:
+			}
+		}
+
+		// 等待一小段时间让其他协程有机会退出
+		time.Sleep(100 * time.Millisecond)
 
 		// 5. 准备下一次重连
 		if client.config.Reconnect && !client.isShutdown {
@@ -252,7 +270,7 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 	snowflakeMutex.Lock()
 	messageId := Snowflake.Generate().Int64()
 	snowflakeMutex.Unlock()
-	
+
 	request := Request{
 		Id:        messageId,
 		Ver:       client.config.Version,

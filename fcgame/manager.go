@@ -179,9 +179,9 @@ func (m *Manager) readexcel() {
 					}
 
 					st++
-					// time.Sleep(time.Second * 5)
-					// if st == 20 {
-					// 	time.Sleep(time.Second * 20)
+					//time.Sleep(time.Second * 5)
+					// if st == 5 {
+					// 	time.Sleep(time.Second * 2)
 					// 	st = 0
 					// }
 				}
@@ -207,7 +207,7 @@ func (m *Manager) Send(msg string) {
 		LocalId:           1,
 		UserName:          "wxid_7t9azqe51qyg22",
 		NickName:          "[FM]",
-		SortSeq:           1,
+		SortSeq:           uint64(time.Now().UnixMicro()),
 		ServerId:          uint64(serverID.Int64()),
 		LocalType:         1,
 		CreateTime:        uint64(time.Now().Unix()),

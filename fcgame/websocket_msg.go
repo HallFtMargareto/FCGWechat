@@ -60,7 +60,7 @@ func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) (
 		for _, contact := range contacts {
 			// 转换为FcgContact格式
 			fcgContact := FcgContact{
-				TenantId:      1,
+				TenantId:      0,
 				Username:      contact.Username,
 				LocalType:     contact.LocalType,
 				Alias:         contact.Alias,
@@ -232,7 +232,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 
 			// 转换为FcgMessage格式
 			message := FcgMessage{
-				TenantId:          1,
+				TenantId:          0,
 				LocalId:           uint64(msgResult.LocalId),
 				UserName:          msgResult.UserName,
 				SortSeq:           msgResult.SortSeq,
