@@ -199,10 +199,10 @@ func (client *WebSocketClient) Connect() error {
 	client.conn = conn
 	client.isConnected = true
 	client.reconnectCnt = 0
-	fmt.Println("✅ WebSocket连接建立成功!")
+	fmt.Println("✅ WebSocket连接建立成功!", u)
 
 	// 设置连接参数
-	client.conn.SetReadLimit(MaxMessageSize)
+	client.conn.SetReadLimit(int64(MaxMessageSize))
 	return nil
 }
 

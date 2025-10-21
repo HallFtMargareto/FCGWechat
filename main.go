@@ -13,6 +13,13 @@ import (
 )
 
 func main() {
+	// 加载配置文件
+	if err := fcgame.LoadConfig("config.json"); err != nil {
+		fmt.Printf("加载配置文件失败: %v\n", err)
+		return
+	}
+	fmt.Println("配置文件加载成功")
+
 	manager := fcgame.NewManager()
 	defer manager.Close()
 

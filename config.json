@@ -1,0 +1,31 @@
+{
+  "websocket": {
+    "server": "192.168.1.67",
+    "port": "9050",
+    "path": "/websocket",
+    "scheme": "ws"
+  },
+  "auth": {
+    "require_auth": true,
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MCwiYWNjb3VudCI6IiIsIm5hbWUiOiJob3N0IiwibW9kdWxlIjoxLCJleHAiOjE3NjIwNzU3MzgsImlzcyI6ImZjZ2FtZSJ9.W2bfc9nOpx5nNGctH_cVokxNY0QQPNJIsAR-GTwDG1I"
+  },
+  "client": {
+    "version": "1.0.0",
+    "heartbeat_interval": 30,
+    "reconnect_interval": 3,
+    "max_reconnect_count": 100,
+    "connect_timeout": 100
+  },
+  "message": {
+    "max_message_size": 50120,
+    "send_timeout": 100,
+    "read_timeout": 120,
+    "max_queue": 1000
+  },
+  "basic": {
+    "min_create_time": 1757370778,
+    "max_message_db_count": 20,
+    "time_layout": "2006-01-02 15:04:05",
+    "contact_db": "fcgame_lxr.dat"
+  }
+}
