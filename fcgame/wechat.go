@@ -52,6 +52,9 @@ func (wm *WechatManager) LoadAccountsFromCache(rbblot interface{}) []AccountInfo
 
 // GetAndSaveAccounts 获取并保存账户信息
 func (wm *WechatManager) GetAndSaveAccounts(rbblot interface{}) []AccountInfo {
+
+	return FetchAccount()
+
 	// 设置全局panic处理
 	defer func() {
 		if r := recover(); r != nil {

@@ -186,6 +186,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 		// 只获取文本记录
 		conditions = append(conditions, "m.local_type = ?")
 		args = append(args, model.MessageTypeText)
+		
 
 		// 只获取当天的记录
 		conditions = append(conditions, "m.create_time >= ?")

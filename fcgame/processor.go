@@ -117,18 +117,16 @@ func (dp *DataProcessor) SaveDatabaseState() {
 
 // StartPeriodicProcessing 启动定期处理
 func (dp *DataProcessor) StartPeriodicProcessing() {
-	dp.logger.Info("找到账户，开始定期解密", zap.Int("account_count", len(dp.accounts)))
+	dp.logger.Info("定时任务开启，", zap.Int("account_count", len(dp.accounts)))
 
 	// 定时器，每分钟执行一次
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	dp.logger.Info("定时器启动，每分钟处理一次")
-
 	for {
 		select {
 		case <-ticker.C:
-			dp.logger.Debug("定期处理任务开始")
+			dp.logger.Debug("任务开始")
 			// 加锁防止重复处理
 			dp.processLock.Lock()
 			for _, account := range dp.accounts {
@@ -137,7 +135,7 @@ func (dp *DataProcessor) StartPeriodicProcessing() {
 			// 保存数据库状态
 			dp.SaveDatabaseState()
 			dp.processLock.Unlock()
-			dp.logger.Debug("定期处理任务完成")
+			dp.logger.Debug("任务完成")
 		}
 	}
 }
@@ -203,7 +201,7 @@ func (dp *DataProcessor) ProcessAllAccounts() {
 
 // processAccountData 处理账户数据（解密、读取、发送）
 func (dp *DataProcessor) processAccountData(account AccountInfo) {
-	dp.logger.Info("开始处理账户", zap.String("account", account.Name))
+	dp.logger.Info("开始同步账户", zap.String("account", account.Name))
 
 	// 创建解密器
 	decryptor, err := decrypt.NewDecryptor(account.Platform, account.Version)
@@ -237,16 +235,16 @@ func (dp *DataProcessor) processAccountData(account AccountInfo) {
 func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) error {
 	// 检查文件是否需要更新
 	if !dp.needsUpdate(dbFile) {
-		dp.logger.Debug("联系人数据库无更新", zap.String("file", filepath.Base(dbFile)))
+		dp.logger.Debug("LXR无更新", zap.String("file", filepath.Base(dbFile)))
 		return nil
 	}
 
-	dp.logger.Info("处理联系人数据库", zap.String("file", filepath.Base(dbFile)))
+	dp.logger.Info("处理LXR", zap.String("file", filepath.Base(dbFile)))
 
 	// 解密到临时文件
 	file, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key, true)
 	if err != nil {
-		dp.logger.Error("解密联系人数据库失败", zap.Error(err))
+		dp.logger.Error("处理LXR-DF失败", zap.Error(err))
 		return err
 	}
 	// 确保删除临时文件

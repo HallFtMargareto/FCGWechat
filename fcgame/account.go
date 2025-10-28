@@ -4,21 +4,23 @@ package fcgame
 {Name: "wxid_7t9azqe51qyg22_0210", SortName: "", Platform: "windows", Version: 4, FullVersion: "4.0.3.36", DataDir: "C:\\Users\\oliver\\Documents\\xwechat_files\\wxid_7t9azqe51qyg22_0210", Key: "3520aff0dafe4f83b6d255c073e3f7afc8b6d316123d44c1b587b3f07d30099c", ImgKey: "34303365613865303735336430636332", PID: 4052, ExePath: "C:\\Program Files\\Tencent\\Weixin\\Weixin.exe", Status: "online", SavedAt: 1757837104}
 */
 
-func FetchAccount() AccountInfo {
+func FetchAccount() []AccountInfo {
+	var list []AccountInfo
 	account := AccountInfo{
-		Name:        "wxid_7t9azqe51qyg22_0210",
+		Name:        "wxid_0f32w7u1lmox22_3011",
 		SortName:    "",
 		Platform:    "windows",
 		Version:     4,
-		FullVersion: "4.1.2.17",
-		DataDir:     "C:\\Users\\oliver\\Documents\\xwechat_files\\wxid_7t9azqe51qyg22_021",
-		Key:         "3520aff0dafe4f83b6d255c073e3f7afc8b6d316123d44c1b587b3f07d30099c",
+		FullVersion: "4.1.2.0",
+		DataDir:     "C:\\Users\\51722\\Documents\\xwechat_files\\wxid_0f32w7u1lmox22_3011",
+		Key:         "2abdce50839242268b5a1229b3aecde4d6edb782cb394803857521353461ce79",
 		ImgKey:      "34303365613865303735336430636332",
 		PID:         1000,
 		ExePath:     "C:\\Program Files\\Tencent\\Weixin\\Weixin.exe",
 		Status:      "online",
-		SavedAt:     1757837104,
+		SavedAt:     1761637918,
 	}
+	list = append(list, account)
 
-	return account
+	return list
 }
