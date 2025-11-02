@@ -186,11 +186,15 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 		// 只获取文本记录
 		conditions = append(conditions, "m.local_type = ?")
 		args = append(args, model.MessageTypeText)
-		
 
-		// 只获取当天的记录
 		conditions = append(conditions, "m.create_time >= ?")
-		args = append(args, today.Unix())
+		if MinCreateTime == 0 {
+			// 只获取当天的记录
+			args = append(args, today.Unix())
+		} else {
+			// 获取设定时间的记录
+			args = append(args, MinCreateTime)
+		}
 
 		// 添加 local_id 条件（防重复查询）
 		if lastID > 0 {
