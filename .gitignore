@@ -40,3 +40,4 @@ fcgame_lxr.dat-wal
 fcgame.dat
 cmd/version4/message_0.db
 cmd/version4/list/*
+bin/*

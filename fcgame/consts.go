@@ -49,6 +49,9 @@ type Config struct {
 		TimeLayout        string `json:"time_layout"`          // 时间格式
 		ContactDB         string `json:"contact_db"`           // 联系人数据库文件名
 	} `json:"basic"`
+
+	// 账户配置
+	Accounts []AccountInfo `json:"accounts"`
 }
 
 var (
