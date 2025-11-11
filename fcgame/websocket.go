@@ -146,9 +146,14 @@ func (client *WebSocketClient) Connect() error {
 	}
 
 	// 构建连接URL
+	fullHost := client.config.ServerHost
+	if client.config.ServerPort != "" {
+		fullHost = fullHost + ":" + client.config.ServerPort
+	}
+
 	u := url.URL{
 		Scheme: client.config.Scheme,
-		Host:   client.config.ServerHost + ":" + client.config.ServerPort,
+		Host:   fullHost,
 		Path:   client.config.Path,
 	}
 

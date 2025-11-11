@@ -23,6 +23,7 @@ type Config struct {
 	Auth struct {
 		RequireAuth bool   `json:"require_auth"` // 是否需要JWT认证
 		Token       string `json:"token"`        // 默认JWT Token
+		TenantId    int    `json:"tenant_id"`    // 租户ID
 	} `json:"auth"`
 
 	// 客户端配置
@@ -101,6 +102,7 @@ func setDefaultConfig() {
 	// 认证配置
 	AppConfig.Auth.RequireAuth = true
 	AppConfig.Auth.Token = ""
+	AppConfig.Auth.TenantId = 0
 
 	// 客户端配置
 	AppConfig.Client.Version = "1.0.0"
@@ -131,6 +133,7 @@ func applyConfig() {
 
 	RequireAuth = AppConfig.Auth.RequireAuth
 	DefaultToken = AppConfig.Auth.Token
+	TenantId = AppConfig.Auth.TenantId
 
 	ClientVersion = AppConfig.Client.Version
 	HeartbeatInterval = time.Duration(AppConfig.Client.HeartbeatInterval) * time.Second
@@ -160,6 +163,7 @@ var (
 	// 认证配置
 	RequireAuth  bool   // 是否需要JWT认证
 	DefaultToken string // 默认JWT Token
+	TenantId     int    // 租户ID
 
 	// 客户端配置
 	ClientVersion     string        // 客户端版本

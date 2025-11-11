@@ -60,7 +60,7 @@ func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) (
 		for _, contact := range contacts {
 			// 转换为FcgContact格式
 			fcgContact := FcgContact{
-				TenantId:      0,
+				TenantId:      uint(TenantId),
 				Username:      contact.Username,
 				LocalType:     contact.LocalType,
 				Alias:         contact.Alias,
