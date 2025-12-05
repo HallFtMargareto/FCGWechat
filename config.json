@@ -3,7 +3,7 @@
     "server": "ftcmsy365.com",
     "port": "",
     "path": "/websocket",
-    "scheme": "wss"
+    "scheme": "ws"
   },
   "auth": {
     "require_auth": true,
