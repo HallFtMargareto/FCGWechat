@@ -35,33 +35,36 @@ func GetDefaultConfig() ClientConfig {
 }
 
 type WebSocketClient struct {
-	conn          *websocket.Conn
-	msgID         int
-	config        ClientConfig
-	isConnected   bool
-	isShutdown    bool
-	reconnectCnt  int
-	heartbeatStop chan bool
-	messageStop   chan bool
-	errorChan     chan error
-	logger        *zap.Logger
-	writeMtx      sync.Mutex  // 新增: 用来保护写操作
-	sendChan      chan []byte // 新增: 写协程使用的消息队列
+	conn            *websocket.Conn
+	msgID           int
+	config          ClientConfig
+	isConnected     bool
+	isShutdown      bool
+	reconnectCnt    int
+	heartbeatStop   chan bool
+	messageStop     chan bool
+	errorChan       chan error
+	logger          *zap.Logger
+	writeMtx        sync.Mutex  // 用来保护写操作
+	sendChan        chan []byte // 写协程使用的消息队列
+	pendingMessages [][]byte    // 缓存未发送的消息
+	pendingMtx      sync.Mutex  // 保护pendingMessages的并发访问
 }
 
 // 创建新的WebSocket客户端
 func NewWebSocketClient(config ClientConfig, log *zap.Logger) *WebSocketClient {
 	return &WebSocketClient{
-		config:        config,
-		msgID:         1,
-		isConnected:   false,
-		isShutdown:    false,
-		reconnectCnt:  0,
-		heartbeatStop: make(chan bool, 1),
-		messageStop:   make(chan bool, 1),
-		errorChan:     make(chan error, 10),
-		logger:        log,
-		sendChan:      make(chan []byte, MaxMessageQueue), // 缓冲区可调
+		config:          config,
+		msgID:           1,
+		isConnected:     false,
+		isShutdown:      false,
+		reconnectCnt:    0,
+		heartbeatStop:   make(chan bool, 1),
+		messageStop:     make(chan bool, 1),
+		errorChan:       make(chan error, 10),
+		logger:          log,
+		sendChan:        make(chan []byte, MaxMessageQueue), // 缓冲区可调
+		pendingMessages: make([][]byte, 0),                  // 初始化消息缓存
 	}
 }
 
@@ -109,6 +112,9 @@ func (client *WebSocketClient) Run() {
 		// 4. 清理旧的连接和协程
 		client.isConnected = false // 标记连接为断开状态
 
+		// 保存未发送的消息
+		client.saveUnsentMessages()
+
 		// 关闭连接，这会导致其他协程也退出
 		if client.conn != nil {
 			client.conn.Close()
@@ -116,23 +122,22 @@ func (client *WebSocketClient) Run() {
 		}
 
 		// 关闭sendChan来停止写协程（如果还没有停止的话）
-		select {
-		case <-client.sendChan:
-			// channel已经关闭或为空
-		default:
-			// 尝试发送一个空消息来触发写协程退出检查
-			select {
-			case client.sendChan <- []byte{}:
-			default:
-			}
-		}
+		close(client.sendChan)
 
 		// 等待一小段时间让其他协程有机会退出
 		time.Sleep(100 * time.Millisecond)
 
 		// 5. 准备下一次重连
 		if client.config.Reconnect && !client.isShutdown {
-			fmt.Println("Retrying...")
+			pendingCount := client.getPendingMessageCount()
+			if pendingCount > 0 {
+				fmt.Printf("waiting retrying. has %d message on queue...\n", pendingCount)
+			}
+
+			// 创建新的sendChan用于下一次连接
+			client.sendChan = make(chan []byte, MaxMessageQueue)
+
+			fmt.Println("retrying...")
 			time.Sleep(client.config.ReconnectWait)
 		}
 	}
@@ -228,7 +233,7 @@ func (client *WebSocketClient) ConnectWithRetry() error {
 		}
 	}
 
-	return fmt.Errorf("Max Retrying (%d)，Connection Fail。", client.config.MaxReconnect)
+	return fmt.Errorf("Max Retrying (%d) Connection Fail", client.config.MaxReconnect)
 }
 
 // 检查连接状态
@@ -254,7 +259,7 @@ func (client *WebSocketClient) write(msgType int, data []byte) error {
 	defer client.writeMtx.Unlock()
 
 	if !client.isConnected {
-		return fmt.Errorf("client not connection.")
+		return fmt.Errorf("client not connection")
 	}
 
 	// 设置写超时
@@ -290,8 +295,13 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 		return fmt.Errorf("序列化消息失败: %v", err)
 	}
 
-	// return client.write(websocket.TextMessage, msgBytes)
-	client.sendChan <- msgBytes
+	// 将消息添加到待发送队列
+	client.addPendingMessage(msgBytes)
+
+	// 如果连接正常，直接发送
+	if client.IsConnected() {
+		client.sendChan <- msgBytes
+	}
 	return nil
 }
 
@@ -307,15 +317,22 @@ func (client *WebSocketClient) SendClientLog(log any) error {
 
 // 发送心跳（Ping）
 func (client *WebSocketClient) SendHeartbeat() error {
-	// return client.write(websocket.PingMessage, nil)
-	client.sendChan <- websocket.FormatCloseMessage(websocket.PingMessage, "")
+	// 心跳消息不需要缓存，因为它是周期性的
+	if client.IsConnected() {
+		client.sendChan <- websocket.FormatCloseMessage(websocket.PingMessage, "")
+	}
 	return nil
 }
 
 // 发送文本消息
 func (client *WebSocketClient) SendTextMessage(text []byte) error {
-	// return client.write(websocket.TextMessage, []byte(text))
-	client.sendChan <- text
+	// 将消息添加到待发送队列
+	client.addPendingMessage(text)
+
+	// 如果连接正常，直接发送
+	if client.IsConnected() {
+		client.sendChan <- text
+	}
 	return nil
 }
 
@@ -421,56 +438,78 @@ func (client *WebSocketClient) StopListening() {
 // 获取统计信息
 func (client *WebSocketClient) GetStats() map[string]interface{} {
 	return map[string]interface{}{
-		"connected":       client.IsConnected(),
-		"connection_info": client.GetConnectionInfo(),
-		"message_id":      client.msgID,
-		"reconnect_count": client.reconnectCnt,
-		"is_shutdown":     client.isShutdown,
+		"connected":             client.IsConnected(),
+		"connection_info":       client.GetConnectionInfo(),
+		"message_id":            client.msgID,
+		"reconnect_count":       client.reconnectCnt,
+		"is_shutdown":           client.isShutdown,
+		"pending_message_count": client.getPendingMessageCount(),
 	}
 }
 
 // 关闭连接
 func (client *WebSocketClient) Close() {
-	// client.isShutdown = true
-	// client.isConnected = false
-
-	// // 停止心跳和消息监听
-	// client.StopHeartbeat()
-	// client.StopListening()
-
-	// if client.conn != nil {
-	// 	// 发送关闭消息
-	// 	client.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "客户端主动关闭"))
-	// 	client.conn.Close()
-	// 	fmt.Println("🔌 WebSocket连接已关闭")
-	// }
-
-	// 关闭通道
-	close(client.heartbeatStop)
-	close(client.messageStop)
-	close(client.errorChan)
-
 	client.isShutdown = true
 	client.isConnected = false
 
+	// 保存未发送的消息
+	client.saveUnsentMessages()
+
+	// 停止心跳和消息监听
 	client.StopHeartbeat()
 	client.StopListening()
 
 	if client.conn != nil {
+		// 发送关闭消息
 		client.conn.WriteMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "客户端主动关闭"))
 		client.conn.Close()
 		fmt.Println("🔌 WebSocket连接已关闭")
 	}
 
-	close(client.sendChan) // 新增: 停止写协程
-	close(client.heartbeatStop)
-	close(client.messageStop)
-	close(client.errorChan)
+	// 安全地关闭通道，避免重复关闭
+	select {
+	case <-client.heartbeatStop:
+		// 通道已关闭
+	default:
+		close(client.heartbeatStop)
+	}
+
+	select {
+	case <-client.messageStop:
+		// 通道已关闭
+	default:
+		close(client.messageStop)
+	}
+
+	select {
+	case <-client.errorChan:
+		// 通道已关闭
+	default:
+		close(client.errorChan)
+	}
+
+	// 关闭sendChan，停止写协程
+	select {
+	case <-client.sendChan:
+		// 通道已关闭
+	default:
+		close(client.sendChan)
+	}
+
+	pendingCount := client.getPendingMessageCount()
+	if pendingCount > 0 {
+		fmt.Printf("客户端关闭，仍有 %d 条消息未发送\n", pendingCount)
+	}
 }
 
 // 写协程: 顺序写出所有消息
 func (client *WebSocketClient) StartWriter() {
+	// 连接成功后，先发送缓存的消息
+	if client.IsConnected() {
+		client.sendPendingMessages()
+	}
+
 	for msg := range client.sendChan {
 		if len(msg) == 0 {
 			fmt.Println("空消息")
@@ -490,5 +529,120 @@ func (client *WebSocketClient) StartWriter() {
 			client.isConnected = false
 			return
 		}
+
+		// 消息发送成功后，从缓存中移除
+		client.removePendingMessage(msg)
 	}
+}
+
+// addPendingMessage 添加消息到待发送缓存
+func (client *WebSocketClient) addPendingMessage(msg []byte) {
+	client.pendingMtx.Lock()
+	defer client.pendingMtx.Unlock()
+
+	// 避免重复添加相同的消息
+	for _, pending := range client.pendingMessages {
+		if string(pending) == string(msg) {
+			return
+		}
+	}
+
+	client.pendingMessages = append(client.pendingMessages, msg)
+	client.logger.Debug("消息已添加到待发送缓存", zap.Int("缓存消息数", len(client.pendingMessages)))
+}
+
+// removePendingMessage 从待发送缓存中移除消息
+func (client *WebSocketClient) removePendingMessage(msg []byte) {
+	client.pendingMtx.Lock()
+	defer client.pendingMtx.Unlock()
+
+	for i, pending := range client.pendingMessages {
+		if string(pending) == string(msg) {
+			// 移除该消息
+			client.pendingMessages = append(client.pendingMessages[:i], client.pendingMessages[i+1:]...)
+			client.logger.Debug("消息已从待发送缓存中移除", zap.Int("剩余缓存消息数", len(client.pendingMessages)))
+			break
+		}
+	}
+}
+
+// sendPendingMessages 发送所有缓存的消息
+func (client *WebSocketClient) sendPendingMessages() {
+	client.pendingMtx.Lock()
+	pendingCount := len(client.pendingMessages)
+	client.pendingMtx.Unlock()
+
+	if pendingCount == 0 {
+		return
+	}
+
+	client.logger.Info("开始发送缓存的消息", zap.Int("缓存消息数", pendingCount))
+
+	// 复制一份待发送的消息，避免长时间锁定
+	client.pendingMtx.Lock()
+	messagesToSend := make([][]byte, len(client.pendingMessages))
+	copy(messagesToSend, client.pendingMessages)
+	client.pendingMtx.Unlock()
+
+	// 逐个发送缓存的消息
+	for _, msg := range messagesToSend {
+		if !client.IsConnected() {
+			client.logger.Error("连接已断开，停止发送缓存消息")
+			return
+		}
+
+		select {
+		case client.sendChan <- msg:
+			client.logger.Debug("缓存消息已重新加入发送队列")
+		default:
+			// 如果发送队列满了，等待一段时间后重试
+			client.logger.Warn("发送队列已满，等待后重试发送缓存消息")
+			time.Sleep(100 * time.Millisecond)
+			select {
+			case client.sendChan <- msg:
+				client.logger.Debug("缓存消息已重新加入发送队列（重试成功）")
+			default:
+				client.logger.Error("发送队列仍然满，缓存消息发送失败: " + string(msg))
+				return
+			}
+		}
+	}
+
+	client.logger.Info("所有缓存消息已重新加入发送队列")
+}
+
+// saveUnsentMessages 保存未发送的消息（在连接断开时调用）
+func (client *WebSocketClient) saveUnsentMessages() {
+	client.pendingMtx.Lock()
+	defer client.pendingMtx.Unlock()
+
+	// 将sendChan中的消息转移到pendingMessages
+	for {
+		select {
+		case msg := <-client.sendChan:
+			if len(msg) > 0 {
+				// 避免重复添加
+				found := false
+				for _, pending := range client.pendingMessages {
+					if string(pending) == string(msg) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					client.pendingMessages = append(client.pendingMessages, msg)
+				}
+			}
+		default:
+			// sendChan已空，退出循环
+			return
+		}
+	}
+}
+
+// getPendingMessageCount 获取待发送消息数量
+func (client *WebSocketClient) getPendingMessageCount() int {
+	client.pendingMtx.Lock()
+	defer client.pendingMtx.Unlock()
+	return len(client.pendingMessages)
 }

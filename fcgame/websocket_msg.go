@@ -266,7 +266,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 			err = dp.wsClient.SendFcgMessage(message)
 			if err != nil {
 				dp.logger.Error("发送消息数据失败", zap.Error(err))
-				return 0
+				continue
 			}
 
 			// 更新最后处理的ID
