@@ -139,9 +139,9 @@ func InitLogger() (*zap.Logger, error) {
 	// 配置lumberjack按天轮转
 	lumberjackLogger := &lumberjack.Logger{
 		Filename:   logFile,
-		MaxSize:    100,  // 最大文件大小(MB)
-		MaxBackups: 30,   // 最多保留30个备份文件
-		MaxAge:     30,   // 最多保留30天
+		MaxSize:    10,   // 最大文件大小(MB)
+		MaxBackups: 7,    // 最多保留30个备份文件
+		MaxAge:     7,    // 最多保留30天
 		Compress:   true, // 压缩旧文件
 		LocalTime:  true, // 使用本地时间
 	}
