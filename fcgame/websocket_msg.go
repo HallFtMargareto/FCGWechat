@@ -237,7 +237,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 
 			// 转换为FcgMessage格式
 			message := FcgMessage{
-				TenantId:          0,
+				TenantId:          0, //会根据所属会话确定tenant_id
 				LocalId:           uint64(msgResult.LocalId),
 				UserName:          msgResult.UserName,
 				SortSeq:           msgResult.SortSeq,

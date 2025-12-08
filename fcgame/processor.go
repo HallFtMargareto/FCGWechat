@@ -97,7 +97,18 @@ func (dp *DataProcessor) LoadDatabaseState() {
 
 	if err := json.Unmarshal(data, &dp.dbState); err != nil {
 		dp.logger.Error("反序列化数据库状态失败", zap.Error(err))
+
+		dp.dbState = DatabaseState{
+			ContactLastID:   0,
+			MessageTableMap: make(map[string]int64),
+			FileStates:      make(map[string]FileState),
+		}
 		return
+	}
+
+	// 每次打开程序，强制改为0(默认取本日消息数据)
+	for k := range dp.dbState.MessageTableMap {
+		dp.dbState.MessageTableMap[k] = 0
 	}
 
 	dp.logger.Info("成功加载数据库状态")
