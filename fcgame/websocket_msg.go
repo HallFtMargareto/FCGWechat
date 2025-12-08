@@ -155,6 +155,17 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 		lastID = 0
 	}
 
+	// 查询表中最新的local_id
+	var maxLocalId int64
+	maxIdQuery := fmt.Sprintf("SELECT local_id FROM %s ORDER BY local_id DESC LIMIT 1", tableName)
+	err := db.Raw(maxIdQuery).Scan(&maxLocalId).Error
+	if err == nil {
+		// 清空了消息, 从新从0开始发送
+		if maxLocalId < lastID {
+			lastID = 0
+		}
+	}
+
 	//联系人DB
 	cdb, err := GetGormDB(CONTACT_DB)
 	if err != nil {

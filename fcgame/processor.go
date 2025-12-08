@@ -211,7 +211,7 @@ func (dp *DataProcessor) ProcessAllAccounts() {
 
 // processAccountData 处理账户数据（解密、读取、发送）
 func (dp *DataProcessor) processAccountData(account AccountInfo) {
-	dp.logger.Info("开始同步账户", zap.String("account", account.Name))
+	dp.logger.Info("start sync account.", zap.String("account", account.Name))
 
 	// 创建解密器
 	decryptor, err := decrypt.NewDecryptor(account.Platform, account.Version)
@@ -238,23 +238,23 @@ func (dp *DataProcessor) processAccountData(account AccountInfo) {
 		}
 	}
 
-	dp.logger.Info("账户处理完成", zap.String("account", account.Name))
+	dp.logger.Info("sync finish", zap.String("account", account.Name))
 }
 
 // ProcessContactDatabase 处理联系人数据库
 func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) error {
 	// 检查文件是否需要更新
 	if !dp.needsUpdate(dbFile) {
-		dp.logger.Debug("LXR无更新", zap.String("file", filepath.Base(dbFile)))
+		dp.logger.Info("contact no update required", zap.String("file", filepath.Base(dbFile)))
 		return nil
 	}
 
-	dp.logger.Info("处理LXR", zap.String("file", filepath.Base(dbFile)))
+	dp.logger.Info("process contact", zap.String("file", filepath.Base(dbFile)))
 
 	// 解密到临时文件
 	file, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key, true)
 	if err != nil {
-		dp.logger.Error("处理LXR-DF失败", zap.Error(err))
+		dp.logger.Error("process contact fail", zap.Error(err))
 		return err
 	}
 	// 确保删除临时文件
@@ -283,20 +283,20 @@ func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbF
 	// 	return
 	// }
 
-	dp.logger.Debug("处理消息数据库", zap.String("file", filepath.Base(dbFile)))
+	dp.logger.Debug("process message", zap.String("file", filepath.Base(dbFile)))
 
 	// 解密到临时文件
 	tempDBFile, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key, false)
 	if err != nil {
-		dp.logger.Debug("解密消息数据库失败", zap.Error(err))
+		dp.logger.Debug("Failed to decrypt message database", zap.Error(err))
 		return
 	}
 	// 确保删除临时文件
 	defer func() {
 		if err := os.Remove(tempDBFile); err != nil {
-			dp.logger.Info("删除临时文件失败", zap.String("file", tempDBFile), zap.Error(err))
+			dp.logger.Info("remove temp data error", zap.String("file", tempDBFile), zap.Error(err))
 		} else {
-			dp.logger.Debug("临时文件已删除", zap.String("file", tempDBFile))
+			dp.logger.Debug("temp data remove", zap.String("file", tempDBFile))
 		}
 	}()
 
@@ -311,7 +311,7 @@ func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbF
 func (dp *DataProcessor) needsUpdate(filePath string) bool {
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
-		dp.logger.Error("获取文件信息失败", zap.String("file", filePath), zap.Error(err))
+		dp.logger.Error("get find info error", zap.String("file", filePath), zap.Error(err))
 		return false
 	}
 
