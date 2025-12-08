@@ -72,7 +72,7 @@ func (client *WebSocketClient) Run() {
 	for !client.isShutdown {
 		// 1. 尝试连接
 		if err := client.Connect(); err != nil {
-			fmt.Println("Connection failed. Retrying...", err)
+			fmt.Println("Connection failed. ", err)
 			// 使用ConnectWithRetry的逻辑进行等待
 			if client.config.Reconnect && !client.isShutdown {
 				time.Sleep(client.config.ReconnectWait)
@@ -88,13 +88,13 @@ func (client *WebSocketClient) Run() {
 
 		SafeRun(func() {
 			client.StartWriter()
-			fmt.Println("StartWriter Coroutine Exit。")
+			fmt.Println("StartWriter Process Exit。")
 			goroutineDone <- true
 		})
 
 		SafeRun(func() {
 			client.ListenMessages()
-			fmt.Println("ListenMessages Coroutine Exit。")
+			fmt.Println("ListenMessages Process Exit。")
 			goroutineDone <- true
 		})
 
@@ -198,7 +198,7 @@ func (client *WebSocketClient) Connect() error {
 				return fmt.Errorf("请求过于频繁，被限流")
 			}
 		}
-		return fmt.Errorf("连接失败: %v", err)
+		return err
 	}
 
 	// 关闭响应体
@@ -209,7 +209,7 @@ func (client *WebSocketClient) Connect() error {
 	client.conn = conn
 	client.isConnected = true
 	client.reconnectCnt = 0
-	fmt.Println("✅ Socket Conn Success!", u)
+	fmt.Println("✅ Socket Conn Success!")
 
 	// 设置连接参数
 	client.conn.SetReadLimit(int64(MaxMessageSize))

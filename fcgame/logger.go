@@ -134,7 +134,9 @@ func InitLogger() (*zap.Logger, error) {
 	}
 
 	// 创建按天分割的日志文件路径
-	logFile := filepath.Join(logDir, "fcgame.log")
+	now := time.Now()
+	dateStr := now.Format("20060102")
+	logFile := filepath.Join(logDir, fmt.Sprintf("fcgame_%s.log", dateStr))
 
 	// 配置lumberjack按天轮转
 	lumberjackLogger := &lumberjack.Logger{

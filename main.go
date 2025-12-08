@@ -3,8 +3,10 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 
@@ -13,12 +15,20 @@ import (
 )
 
 func main() {
+	defer func() {
+		if err := recover(); err != nil {
+			// 使用 log.Fatal 或者将错误写入文件、发送到监控平台
+			log.Printf("!!! FATAL: Program crashed with panic: %v\n", err)
+			log.Printf("!!! Stack Trace:\n%s\n", debug.Stack())
+			// 可以选择退出，也可以尝试恢复
+		}
+	}()
+
 	// 加载配置文件
 	if err := fcgame.LoadConfig("config.json"); err != nil {
 		fmt.Printf("加载配置文件失败: %v\n", err)
 		return
 	}
-	fmt.Println("配置文件加载成功")
 
 	manager := fcgame.NewManager()
 	defer manager.Close()

@@ -112,7 +112,6 @@ func (dp *DataProcessor) SaveDatabaseState() {
 	}
 
 	dp.rbblot.Store("database", "state", data)
-	dp.logger.Debug("数据库状态已保存")
 }
 
 // StartPeriodicProcessing 启动定期处理
