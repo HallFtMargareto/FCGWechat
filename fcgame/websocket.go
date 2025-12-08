@@ -31,6 +31,11 @@ func GetDefaultConfig() ClientConfig {
 		Reconnect:     true,
 		MaxReconnect:  MaxReconnectCount,
 		ReconnectWait: ReconnectInterval,
+		ProxyEnabled:  ProxyEnabled,
+		ProxyHost:     ProxyHost,
+		ProxyPort:     ProxyPort,
+		ProxyUsername: ProxyUsername,
+		ProxyPassword: ProxyPassword,
 	}
 }
 
@@ -185,6 +190,46 @@ func (client *WebSocketClient) Connect() error {
 		Subprotocols:     client.config.Subprotocols,
 	}
 
+	// 如果启用了代理，配置代理
+	if client.config.ProxyEnabled && client.config.ProxyHost != "" && client.config.ProxyPort != "" {
+		// 构建代理URL
+		var proxyURL *url.URL
+		var err error
+
+		if client.config.ProxyUsername != "" && client.config.ProxyPassword != "" {
+			// 带认证的代理URL
+			proxyURL, err = url.Parse(fmt.Sprintf("http://%s:%s@%s:%s",
+				url.QueryEscape(client.config.ProxyUsername),
+				url.QueryEscape(client.config.ProxyPassword),
+				client.config.ProxyHost,
+				client.config.ProxyPort))
+		} else {
+			// 不带认证的代理URL
+			proxyURL, err = url.Parse(fmt.Sprintf("http://%s:%s",
+				client.config.ProxyHost,
+				client.config.ProxyPort))
+		}
+
+		if err != nil {
+			return fmt.Errorf("解析代理URL失败: %v", err)
+		}
+
+		// 创建HTTP代理
+		proxyFunc := http.ProxyURL(proxyURL)
+
+		// 创建自定义的Transport
+		transport := &http.Transport{
+			Proxy: proxyFunc,
+		}
+
+		// 设置WebSocket Dialer的代理
+		dialer.Proxy = proxyFunc
+
+		// 设置自定义的NetDialContext
+		dialer.NetDialContext = transport.DialContext
+		client.logger.Info("使用代理连接WebSocket", zap.String("proxy", proxyURL.String()))
+	}
+
 	conn, resp, err := dialer.Dial(u.String(), headers)
 	if err != nil {
 		if resp != nil {
@@ -233,7 +278,7 @@ func (client *WebSocketClient) ConnectWithRetry() error {
 		}
 	}
 
-	return fmt.Errorf("Max Retrying (%d) Connection Fail", client.config.MaxReconnect)
+	return fmt.Errorf("max retrying (%d). connection fail", client.config.MaxReconnect)
 }
 
 // 检查连接状态

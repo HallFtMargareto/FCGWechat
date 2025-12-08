@@ -19,6 +19,15 @@ type Config struct {
 		Scheme string `json:"scheme"` // WebSocket协议 (ws 或 wss)
 	} `json:"websocket"`
 
+	// 代理配置
+	Proxy struct {
+		Enabled  bool   `json:"enabled"`  // 是否启用代理
+		Host     string `json:"host"`     // 代理服务器地址
+		Port     string `json:"port"`     // 代理服务器端口
+		Username string `json:"username"` // 代理认证用户名
+		Password string `json:"password"` // 代理认证密码
+	} `json:"proxy"`
+
 	// 认证配置
 	Auth struct {
 		RequireAuth bool   `json:"require_auth"` // 是否需要JWT认证
@@ -99,6 +108,13 @@ func setDefaultConfig() {
 	AppConfig.WebSocket.Path = "/websocket"
 	AppConfig.WebSocket.Scheme = "wss"
 
+	// 代理配置
+	AppConfig.Proxy.Enabled = false
+	AppConfig.Proxy.Host = ""
+	AppConfig.Proxy.Port = ""
+	AppConfig.Proxy.Username = ""
+	AppConfig.Proxy.Password = ""
+
 	// 认证配置
 	AppConfig.Auth.RequireAuth = true
 	AppConfig.Auth.Token = ""
@@ -118,7 +134,7 @@ func setDefaultConfig() {
 	AppConfig.Message.MaxQueue = 5000
 
 	// 基础配置
-	AppConfig.Basic.MinCreateTime = 1757370778
+	AppConfig.Basic.MinCreateTime = 0
 	AppConfig.Basic.MaxMessageDBCount = 20
 	AppConfig.Basic.TimeLayout = "2006-01-02 15:04:05"
 	AppConfig.Basic.ContactDB = "fcgame_lxr.dat"
@@ -130,6 +146,12 @@ func applyConfig() {
 	WSPort = AppConfig.WebSocket.Port
 	WSPath = AppConfig.WebSocket.Path
 	WSScheme = AppConfig.WebSocket.Scheme
+
+	ProxyEnabled = AppConfig.Proxy.Enabled
+	ProxyHost = AppConfig.Proxy.Host
+	ProxyPort = AppConfig.Proxy.Port
+	ProxyUsername = AppConfig.Proxy.Username
+	ProxyPassword = AppConfig.Proxy.Password
 
 	RequireAuth = AppConfig.Auth.RequireAuth
 	DefaultToken = AppConfig.Auth.Token
@@ -159,6 +181,13 @@ var (
 	WSPort   string // WebSocket服务器端口
 	WSPath   string // WebSocket路径
 	WSScheme string // WebSocket协议 (ws 或 wss)
+
+	// 代理配置
+	ProxyEnabled  bool   // 是否启用代理
+	ProxyHost     string // 代理服务器地址
+	ProxyPort     string // 代理服务器端口
+	ProxyUsername string // 代理认证用户名
+	ProxyPassword string // 代理认证密码
 
 	// 认证配置
 	RequireAuth  bool   // 是否需要JWT认证
@@ -202,6 +231,13 @@ type ClientConfig struct {
 	Reconnect     bool          `json:"reconnect"`      // 是否自动重连
 	MaxReconnect  int           `json:"max_reconnect"`  // 最大重连次数
 	ReconnectWait time.Duration `json:"reconnect_wait"` // 重连等待时间
+
+	// 代理配置
+	ProxyEnabled  bool   `json:"proxy_enabled"`  // 是否启用代理
+	ProxyHost     string `json:"proxy_host"`     // 代理服务器地址
+	ProxyPort     string `json:"proxy_port"`     // 代理服务器端口
+	ProxyUsername string `json:"proxy_username"` // 代理认证用户名
+	ProxyPassword string `json:"proxy_password"` // 代理认证密码
 }
 
 type DatabaseState struct {
