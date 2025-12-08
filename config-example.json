@@ -3,11 +3,11 @@
     "server": "ftcmsy365.com",
     "port": "",
     "path": "/websocket",
-    "scheme": "ws"
+    "scheme": "wss"
   },
   "auth": {
     "require_auth": true,
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MCwiYWNjb3VudCI6IiIsIm5hbWUiOiJob3N0IiwibW9kdWxlIjoxLCJleHAiOjE3NjIwNzU3MzgsImlzcyI6ImZjZ2FtZSJ9.W2bfc9nOpx5nNGctH_cVokxNY0QQPNJIsAR-GTwDG1I",
+    "token": "",
     "tenant_id": 0
   },
   "client": {
@@ -21,7 +21,7 @@
     "max_message_size": 50120,
     "send_timeout": 100,
     "read_timeout": 120,
-    "max_queue": 1000
+    "max_queue": 5000
   },
   "basic": {
     "min_create_time": 0,

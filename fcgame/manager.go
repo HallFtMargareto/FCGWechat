@@ -39,13 +39,13 @@ func (m *Manager) Initialize() error {
 
 	// 初始化WebSocket连接
 	if err := m.processor.InitializeWebSocket(); err != nil {
-		fmt.Println("WebSocket连接失败", zap.Error(err))
+		fmt.Println("Socket Connection Fail:", err.Error())
 		return err
 	}
 
 	// 加载账户信息
 	if err := m.processor.LoadAccounts(); err != nil {
-		fmt.Println("加载账户失败", zap.Error(err))
+		fmt.Println("Load Account Fail:", err.Error())
 		return err
 	}
 

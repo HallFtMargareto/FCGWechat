@@ -19,13 +19,13 @@ func Run() {
 
 	// 加载微信实例
 	if err := wechat.Load(); err != nil {
-		fmt.Printf("加载微信实例失败: %v\n", err)
+		fmt.Printf("Loca Wx Error: %v\n", err)
 		return
 	}
 
 	accounts := wechat.GetAccounts()
 	if len(accounts) == 0 {
-		fmt.Println("未找到微信实例")
+		fmt.Println("Cant Find Wx Object.")
 		return
 	}
 
@@ -138,7 +138,7 @@ func decryptFile(decryptor decrypt.Decryptor, dbFile, key, outputDir string) err
 	}
 
 	outputFile := filepath.Join(outputDir, relPath)
-	
+
 	// 确保输出目录存在
 	if err := os.MkdirAll(filepath.Dir(outputFile), 0755); err != nil {
 		return err
@@ -151,7 +151,7 @@ func decryptFile(decryptor decrypt.Decryptor, dbFile, key, outputDir string) err
 		return err
 	}
 	defer func() {
-		
+
 		outFile.Close()
 		// 清理临时文件
 		if _, err := os.Stat(outputFile); err == nil {

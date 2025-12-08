@@ -69,7 +69,7 @@ func (client *WebSocketClient) Run() {
 	for !client.isShutdown {
 		// 1. 尝试连接
 		if err := client.Connect(); err != nil {
-			fmt.Println("连接失败，准备重试...", err)
+			fmt.Println("Connection failed. Retrying...", err)
 			// 使用ConnectWithRetry的逻辑进行等待
 			if client.config.Reconnect && !client.isShutdown {
 				time.Sleep(client.config.ReconnectWait)
@@ -85,13 +85,13 @@ func (client *WebSocketClient) Run() {
 
 		SafeRun(func() {
 			client.StartWriter()
-			fmt.Println("StartWriter 协程已退出。")
+			fmt.Println("StartWriter Coroutine Exit。")
 			goroutineDone <- true
 		})
 
 		SafeRun(func() {
 			client.ListenMessages()
-			fmt.Println("ListenMessages 协程已退出。")
+			fmt.Println("ListenMessages Coroutine Exit。")
 			goroutineDone <- true
 		})
 
@@ -104,7 +104,7 @@ func (client *WebSocketClient) Run() {
 
 		// 3. 等待任意一个协程退出（意味着连接断开）
 		<-goroutineDone
-		fmt.Println("检测到协程退出，连接已断开，准备重连。")
+		fmt.Println("Coroutine Exit, Retrying...")
 
 		// 4. 清理旧的连接和协程
 		client.isConnected = false // 标记连接为断开状态
@@ -132,17 +132,17 @@ func (client *WebSocketClient) Run() {
 
 		// 5. 准备下一次重连
 		if client.config.Reconnect && !client.isShutdown {
-			fmt.Println("准备重连...")
+			fmt.Println("Retrying...")
 			time.Sleep(client.config.ReconnectWait)
 		}
 	}
-	client.logger.Info("客户端运行循环结束。")
+	client.logger.Info("client for end.")
 }
 
 // 连接到WebSocket服务器
 func (client *WebSocketClient) Connect() error {
 	if client.isShutdown {
-		return fmt.Errorf("客户端已关闭")
+		return fmt.Errorf("client has close")
 	}
 
 	// 构建连接URL
@@ -204,7 +204,7 @@ func (client *WebSocketClient) Connect() error {
 	client.conn = conn
 	client.isConnected = true
 	client.reconnectCnt = 0
-	fmt.Println("✅ WebSocket连接建立成功!", u)
+	fmt.Println("✅ Socket Conn Success!", u)
 
 	// 设置连接参数
 	client.conn.SetReadLimit(int64(MaxMessageSize))
@@ -220,15 +220,15 @@ func (client *WebSocketClient) ConnectWithRetry() error {
 		}
 
 		client.reconnectCnt++
-		fmt.Printf("❗ 连接失败 (%d/%d): %v", client.reconnectCnt, client.config.MaxReconnect, err)
+		fmt.Printf("❗ connection fail: (%d/%d): %v", client.reconnectCnt, client.config.MaxReconnect, err)
 
 		if client.reconnectCnt < client.config.MaxReconnect && !client.isShutdown {
-			fmt.Printf("🔄 %v 后尝试重连...", client.config.ReconnectWait)
+			fmt.Printf("🔄 %v Second. Retrying...", client.config.ReconnectWait)
 			time.Sleep(client.config.ReconnectWait)
 		}
 	}
 
-	return fmt.Errorf("达到最大重连次数 (%d)，连接失败, 请联系管理员处理。", client.config.MaxReconnect)
+	return fmt.Errorf("Max Retrying (%d)，Connection Fail。", client.config.MaxReconnect)
 }
 
 // 检查连接状态
@@ -254,7 +254,7 @@ func (client *WebSocketClient) write(msgType int, data []byte) error {
 	defer client.writeMtx.Unlock()
 
 	if !client.isConnected {
-		return fmt.Errorf("连接未建立")
+		return fmt.Errorf("client not connection.")
 	}
 
 	// 设置写超时
@@ -264,7 +264,7 @@ func (client *WebSocketClient) write(msgType int, data []byte) error {
 
 	if err != nil {
 		client.isConnected = false
-		return fmt.Errorf("写入消息失败: %v", err)
+		return fmt.Errorf("write message error: %v", err)
 	}
 	return nil
 }
@@ -337,14 +337,14 @@ func (client *WebSocketClient) ListenMessages() {
 		// 设置读取超时
 		_, message, err := client.conn.ReadMessage()
 		if err != nil {
-			client.logger.Error("读取消息错误:", zap.Error(err))
+			client.logger.Error("Read Message Error:", zap.Error(err))
 
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				fmt.Println("WebSocket意外关闭: ", err)
+				fmt.Println("WebSocket Unexpected shutdown: ", err)
 			} else if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-				fmt.Println("WebSocket正常关闭")
+				fmt.Println("WebSocket Unexpected shutdown")
 			} else {
-				fmt.Println("读取消息失败: ", err)
+				fmt.Println("Read Message Error: ", err)
 			}
 			client.isConnected = false
 			return

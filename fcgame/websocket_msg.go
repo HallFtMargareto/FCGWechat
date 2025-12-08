@@ -93,7 +93,7 @@ func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) (
 	}
 
 	if totalCount > 0 {
-		fmt.Println("更新会话信息  ", totalCount, " 条")
+		fmt.Println("update session success:  ", totalCount)
 		dp.logger.Debug("process contact batch success",
 			zap.Int("totalCount", totalCount),
 			zap.Int64("last_id", dp.dbState.ContactLastID))
@@ -284,7 +284,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 	}
 
 	if totalCount > 0 {
-		fmt.Println("已发送 ", totalCount, " 条新消息")
+		fmt.Println("update message: ", totalCount)
 		dp.logger.Debug("process message batch success",
 			zap.String("table", tableName),
 			zap.Int("totalCount", totalCount),

@@ -41,3 +41,4 @@ fcgame.dat
 cmd/version4/message_0.db
 cmd/version4/list/*
 bin/*
+config.json

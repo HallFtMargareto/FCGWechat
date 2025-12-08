@@ -94,10 +94,10 @@ func LoadConfig(configPath string) error {
 // setDefaultConfig 设置默认配置
 func setDefaultConfig() {
 	// WebSocket配置
-	AppConfig.WebSocket.Server = "192.168.1.209"
-	AppConfig.WebSocket.Port = "9050"
+	AppConfig.WebSocket.Server = "ftcmsy365.com"
+	AppConfig.WebSocket.Port = ""
 	AppConfig.WebSocket.Path = "/websocket"
-	AppConfig.WebSocket.Scheme = "ws"
+	AppConfig.WebSocket.Scheme = "wss"
 
 	// 认证配置
 	AppConfig.Auth.RequireAuth = true
@@ -115,7 +115,7 @@ func setDefaultConfig() {
 	AppConfig.Message.MaxMessageSize = 50120
 	AppConfig.Message.SendTimeout = 100
 	AppConfig.Message.ReadTimeout = 120
-	AppConfig.Message.MaxQueue = 1000
+	AppConfig.Message.MaxQueue = 5000
 
 	// 基础配置
 	AppConfig.Basic.MinCreateTime = 1757370778

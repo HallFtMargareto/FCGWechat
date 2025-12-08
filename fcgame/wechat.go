@@ -205,7 +205,7 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 		if err != nil {
 			// 如果已经解密，直接复制文件
 			if strings.Contains(err.Error(), "already decrypted") {
-				Logger.Debug("文件已解密，直接复制", zap.String("file", filepath.Base(dbFile)))
+				Logger.Debug("文件已处理，直接复制", zap.String("file", filepath.Base(dbFile)))
 				data, readErr := os.ReadFile(dbFile)
 				if readErr != nil {
 					os.Remove(targetPath)
@@ -221,7 +221,7 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 			}
 		}
 
-		Logger.Debug("数据库解密到指定文件成功",
+		Logger.Debug("处理文件成功",
 			zap.String("source", filepath.Base(dbFile)),
 			zap.String("target", filepath.Base(targetPath)))
 
@@ -250,7 +250,7 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 		if err != nil {
 			// 如果已经解密，直接复制文件
 			if strings.Contains(err.Error(), "already decrypted") {
-				Logger.Debug("文件已解密，直接复制", zap.String("file", filepath.Base(dbFile)))
+				Logger.Debug("文件已处理，直接复制", zap.String("file", filepath.Base(dbFile)))
 				data, readErr := os.ReadFile(dbFile)
 				if readErr != nil {
 					os.Remove(tempPath)
@@ -262,11 +262,11 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 				}
 			} else {
 				os.Remove(tempPath)
-				return "", fmt.Errorf("解密失败: %v", err)
+				return "", fmt.Errorf("处理失败: %v", err)
 			}
 		}
 
-		Logger.Debug("数据库解密到临时文件成功",
+		Logger.Debug("处理临时文件成功",
 			zap.String("source", filepath.Base(dbFile)),
 			zap.String("temp", filepath.Base(tempPath)))
 
