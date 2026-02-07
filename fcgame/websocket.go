@@ -340,13 +340,17 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 		return fmt.Errorf("序列化消息失败: %v", err)
 	}
 
+	// 检查连接状态
+	if !client.IsConnected() {
+		return fmt.Errorf("客户端未连接")
+	}
+
 	// 将消息添加到待发送队列
 	client.addPendingMessage(msgBytes)
 
 	// 如果连接正常，直接发送
-	if client.IsConnected() {
-		client.sendChan <- msgBytes
-	}
+	client.sendChan <- msgBytes
+
 	return nil
 }
 

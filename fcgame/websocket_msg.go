@@ -235,6 +235,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 
 		subTable := strings.TrimPrefix(tableName, "Msg_")
 
+		var sendErr error
 		// 处理每个消息
 		for _, msgResult := range messages {
 			content := ""
@@ -277,7 +278,8 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 			err = dp.wsClient.SendFcgMessage(message)
 			if err != nil {
 				dp.logger.Error("发送消息数据失败", zap.Error(err))
-				continue
+				sendErr = err
+				break
 			}
 
 			// 更新最后处理的ID
@@ -287,6 +289,10 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 		// 保存进度
 		dp.dbState.MessageTableMap[tableName] = lastID
 		totalCount += batchCount
+
+		if sendErr != nil {
+			return totalCount
+		}
 
 		// 如果这批数据不足batchSize，说明已经处理完所有数据
 		if batchCount < batchSize {
