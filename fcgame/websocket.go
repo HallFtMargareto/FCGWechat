@@ -103,6 +103,13 @@ func (client *WebSocketClient) Run() {
 			goroutineDone <- true
 		})
 
+		// 新起一个协程，重新发送 未发送成功的消息
+		SafeRun(func() {
+			client.ResendFailedMessages()
+			fmt.Println("ResendFailedMessages Process Exit。")
+			goroutineDone <- true
+		})
+
 		// go func() {
 		// 	client.StartHeartbeat()
 		// 	client.logger.Info("StartHeartbeat 协程已退出。")
@@ -166,6 +173,10 @@ func (client *WebSocketClient) Connect() error {
 		Host:   fullHost,
 		Path:   client.config.Path,
 	}
+	// 天机回调参数
+	q := u.Query()
+	q.Set("resp", "true")
+	u.RawQuery = q.Encode()
 
 	client.logger.Info("正在连接到WebSocket服务器: " + u.String())
 
@@ -427,18 +438,41 @@ func (client *WebSocketClient) ListenMessages() {
 		}
 
 		// 解析响应消息
-		// var response Response
-		// err = json.Unmarshal(message, &response)
-		// if err != nil {
-		// 	client.logger.Error("parsing response message error: ", zap.Error(err), zap.Any("response", response))
-		// 	fmt.Println("parsing response message error: ", message)
-		// } else {
-		// 	if response.Data != nil {
-		// 		dataBytes, _ := json.MarshalIndent(response.Data, "", "  ")
-		// 		fmt.Println("接收数据: ", string(dataBytes))
-		// 	}
-		// }
-		fmt.Println(string(message))
+		var response Response
+		err = json.Unmarshal(message, &response)
+		if err != nil {
+			client.logger.Error("parsing response message error: ", zap.Error(err), zap.String("message", string(message)))
+			fmt.Println("parsing response message error: ", string(message))
+		} else {
+			if response.Data != nil {
+				// 处理消息发送成功的回复
+				dataMap, ok := response.Data.(map[string]interface{})
+				if ok {
+					hash, hashOk := dataMap["hash"].(string)
+					localIdFloat, idOk := dataMap["local_id"].(float64) // json解析数字默认是float64
+
+					if hashOk && idOk {
+						localId := uint64(localIdFloat)
+						// 异步更新数据库状态
+						go func(h string, id uint64) {
+							cdb, err := GetGormDB(CONTACT_DB)
+							if err == nil {
+								// 更新发送状态为1
+								cdb.Model(&FcgMessageModel{}).
+									Where("hash = ? AND local_id = ?", h, id).
+									Update("send_status", 1)
+							}
+						}(hash, localId)
+					}
+				}
+			}
+
+			// if response.Data != nil {
+			// 	dataBytes, _ := json.MarshalIndent(response.Data, "", "  ")
+			// 	fmt.Println("接收数据: ", string(dataBytes))
+			// }
+		}
+		// fmt.Println(string(message))
 	}
 }
 
@@ -481,6 +515,92 @@ func (client *WebSocketClient) StopListening() {
 	select {
 	case client.messageStop <- true:
 	default:
+	}
+}
+
+// 重新发送未发送成功的消息
+func (client *WebSocketClient) ResendFailedMessages() {
+	if client.isShutdown {
+		return
+	}
+
+	// 定时器：每隔1分钟检查一次
+
+	
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if !client.IsConnected() {
+				return
+			}
+
+			cdb, err := GetGormDB(CONTACT_DB)
+			if err != nil {
+				client.logger.Error("重发协程获取数据库连接失败", zap.Error(err))
+				continue
+			}
+
+			// 查询发送状态为0，并且创建时间在1分钟之前的记录
+			// 这样做是为了给正常的发送->服务器回复流程留出足够的时间，避免刚刚插入还没来得及收到回复的消息被错误重发
+			var failedMessages []FcgMessageModel
+			oneMinuteAgo := time.Now().Add(-1 * time.Minute)
+
+			err = cdb.Where("send_status = ? AND db_create_at < ?", 0, oneMinuteAgo).
+				Limit(100). // 每次最多重发100条，避免突发大量消息
+				Find(&failedMessages).
+				Error
+
+			if err != nil {
+				client.logger.Error("查询未发送成功消息失败", zap.Error(err))
+				continue
+			}
+
+			if len(failedMessages) == 0 {
+				continue
+			}
+
+			client.logger.Info("开始重发未发送成功的消息", zap.Int("count", len(failedMessages)))
+
+			for _, msgModel := range failedMessages {
+				if !client.IsConnected() {
+					return
+				}
+
+				// 组装要重发的消息
+				message := FcgMessage{
+					TenantId:          msgModel.TenantId,
+					UserName:          msgModel.UserName,
+					NickName:          msgModel.NickName,
+					LocalId:           msgModel.LocalId,
+					SortSeq:           msgModel.SortSeq,
+					ServerId:          msgModel.ServerId,
+					LocalType:         msgModel.LocalType,
+					CreateTime:        msgModel.CreateTime,
+					RealSenderId:      msgModel.RealSenderId,
+					MessageContent:    msgModel.MessageContent,
+					Status:            msgModel.Status,
+					RecognitionStatus: msgModel.RecognitionStatus,
+					MessageNo:         msgModel.MessageNo,
+					TaskList:          msgModel.TaskList,
+					Owner:             msgModel.Owner,
+					Hash:              msgModel.Hash,
+				}
+
+				err = client.SendFcgMessage(message)
+				if err != nil {
+					client.logger.Error("重发消息失败", zap.String("hash", message.Hash), zap.Uint64("local_id", message.LocalId), zap.Error(err))
+				} else {
+					// 为了避免发送太快，稍微休眠一下
+					time.Sleep(50 * time.Millisecond)
+				}
+			}
+
+		case <-client.messageStop: // 复用 messageStop 或新建一个 stop channel
+			return
+		}
 	}
 }
 

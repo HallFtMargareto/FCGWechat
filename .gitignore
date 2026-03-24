@@ -42,3 +42,7 @@ cmd/version4/message_0.db
 cmd/version4/list/*
 bin/*
 config.json
+bin/config.json
+wxid_9ggxxig2xemo22_e939.json
+config-dev.json
+bin/config.json

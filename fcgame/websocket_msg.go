@@ -119,6 +119,26 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 	}
 	defer sqlDB.Close()
 
+	// 初始化并连接联系人数据库
+	cdb, err := GetGormDB(CONTACT_DB)
+	if err != nil {
+		dp.logger.Error("打开联系人数据库失败", zap.Error(err))
+		return
+	}
+	cdbCN, err := cdb.DB()
+	if err != nil {
+		dp.logger.Error("获取联系人数据库连接失败", zap.Error(err))
+		return
+	}
+	defer cdbCN.Close()
+
+	// 自动创建本地消息表
+	err = cdb.AutoMigrate(&FcgMessageModel{})
+	if err != nil {
+		dp.logger.Error("自动创建本地消息表失败", zap.Error(err))
+		return
+	}
+
 	// 获取所有消息表
 	tables := dp.getMessageTablesWithGORM(db)
 	if len(tables) == 0 {
@@ -130,13 +150,13 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 
 	// 处理每个消息表
 	for _, table := range tables {
-		count := dp.processMessageTableWithGORM(db, table, dbFile, account)
+		count := dp.processMessageTableWithGORM(db, cdb, table, dbFile, account)
 		totalCount += count
 	}
 }
 
 // processMessageTableWithGORM 使用GORM处理单个消息表
-func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbFile string, account string) int {
+func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, tableName, dbFile string, account string) int {
 
 	// 获取当天零点
 	now := time.Now()
@@ -165,19 +185,6 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 			lastID = 0
 		}
 	}
-
-	//联系人DB
-	cdb, err := GetGormDB(CONTACT_DB)
-	if err != nil {
-		dp.logger.Error("open contact db fail.", zap.Error(err))
-		return 0
-	}
-	cdbCN, err := cdb.DB()
-	if err != nil {
-		dp.logger.Error("get contact db connection fail.", zap.Error(err))
-		return 0
-	}
-	defer cdbCN.Close()
 
 	for {
 		var messages []Message
@@ -266,12 +273,53 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, tableName, dbF
 				Hash:              subTable,
 			}
 
+			// 查询本地消息表是否存在
+			var existCount int64
+			err := cdb.Model(&FcgMessageModel{}).Where("hash = ? AND local_id = ?", message.Hash, message.LocalId).Count(&existCount).Error
+			if err != nil {
+				dp.logger.Error("查询本地消息记录失败", zap.Error(err))
+				sendErr = err
+				break
+			}
+			if existCount > 0 {
+				// 已经存在，直接跳过并更新lastID
+				lastID = msgResult.LocalId
+				continue
+			}
+
 			var contact Contact
-			err := cdb.Raw("select * from contact where username = ?", message.UserName).Scan(&contact).Error
+			err = cdb.Raw("select * from contact where username = ?", message.UserName).Scan(&contact).Error
 			if err != nil || contact.ID == 0 {
 				message.NickName = "未知用户"
 			} else {
 				message.NickName = contact.NickName
+			}
+
+			// 插入本地消息表
+			msgModel := FcgMessageModel{
+				TenantId:          message.TenantId,
+				UserName:          message.UserName,
+				NickName:          message.NickName,
+				LocalId:           message.LocalId,
+				SortSeq:           message.SortSeq,
+				ServerId:          message.ServerId,
+				LocalType:         message.LocalType,
+				CreateTime:        message.CreateTime,
+				RealSenderId:      message.RealSenderId,
+				MessageContent:    message.MessageContent,
+				Status:            message.Status,
+				RecognitionStatus: message.RecognitionStatus,
+				MessageNo:         message.MessageNo,
+				TaskList:          message.TaskList,
+				Owner:             message.Owner,
+				Hash:              message.Hash,
+				SendStatus:        0, // 初始发送状态为0
+			}
+
+			if err := cdb.Create(&msgModel).Error; err != nil {
+				dp.logger.Error("保存消息到本地数据库失败", zap.Error(err))
+				sendErr = err
+				break
 			}
 
 			// 发送消息
