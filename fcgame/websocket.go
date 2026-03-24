@@ -526,7 +526,6 @@ func (client *WebSocketClient) ResendFailedMessages() {
 
 	// 定时器：每隔1分钟检查一次
 
-	
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
@@ -569,6 +568,10 @@ func (client *WebSocketClient) ResendFailedMessages() {
 					return
 				}
 
+				plainContent, derr := DecryptMessageContent(msgModel.MessageContent)
+				if derr != nil {
+					plainContent = msgModel.MessageContent
+				}
 				// 组装要重发的消息
 				message := FcgMessage{
 					TenantId:          msgModel.TenantId,
@@ -580,7 +583,7 @@ func (client *WebSocketClient) ResendFailedMessages() {
 					LocalType:         msgModel.LocalType,
 					CreateTime:        msgModel.CreateTime,
 					RealSenderId:      msgModel.RealSenderId,
-					MessageContent:    msgModel.MessageContent,
+					MessageContent:    plainContent,
 					Status:            msgModel.Status,
 					RecognitionStatus: msgModel.RecognitionStatus,
 					MessageNo:         msgModel.MessageNo,

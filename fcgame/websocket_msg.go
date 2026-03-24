@@ -295,6 +295,10 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, 
 				message.NickName = contact.NickName
 			}
 
+			encContent, encErr := EncryptMessageContent(message.MessageContent)
+			if encErr != nil {
+				encContent = message.MessageContent
+			}
 			// 插入本地消息表
 			msgModel := FcgMessageModel{
 				TenantId:          message.TenantId,
@@ -306,7 +310,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, 
 				LocalType:         message.LocalType,
 				CreateTime:        message.CreateTime,
 				RealSenderId:      message.RealSenderId,
-				MessageContent:    message.MessageContent,
+				MessageContent:    encContent,
 				Status:            message.Status,
 				RecognitionStatus: message.RecognitionStatus,
 				MessageNo:         message.MessageNo,
