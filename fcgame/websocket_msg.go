@@ -158,31 +158,33 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 // processMessageTableWithGORM 使用GORM处理单个消息表
 func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, tableName, dbFile string, account string) int {
 
-	// 获取当天零点
+	// 获取当前时间及10分钟前的时间
 	now := time.Now()
+	tenMinsAgoMs := now.Add(-10*time.Minute).Unix() * 1000
+
+	// 获取当天零点
 	today := time.Date(
 		now.Year(), now.Month(), now.Day(),
 		0, 0, 0, 0, now.Location(),
 	)
+	todayMs := today.Unix() * 1000
 
 	// 分批处理消息数据，每次最多500条
 	const batchSize = 500
 	totalCount := 0
 
-	var lastID int64
+	// 尝试从持久化状态中获取最后处理的 sort_seq
+	var currentSortSeq int64
 	exists := false
-	if lastID, exists = dp.dbState.MessageTableMap[tableName]; !exists {
-		lastID = 0
-	}
-
-	// 查询表中最新的local_id
-	var maxLocalId int64
-	maxIdQuery := fmt.Sprintf("SELECT local_id FROM %s ORDER BY local_id DESC LIMIT 1", tableName)
-	err := db.Raw(maxIdQuery).Scan(&maxLocalId).Error
-	if err == nil {
-		// 清空了消息, 从新从0开始发送
-		if maxLocalId < lastID {
-			lastID = 0
+	if currentSortSeq, exists = dp.dbState.MessageTableMap[tableName]; !exists {
+		// 第一次启动（本地没有记录），以当天零点作为起始查询条件
+		currentSortSeq = todayMs
+	} else {
+		// 已经运行过，为了防止漏消息，我们比较持久化的 sort_seq 和 10分钟前的时间。
+		// 取较小的一个作为起点（但通常情况下，如果程序一直运行，持久化的 sort_seq 可能比10分钟前大，
+		// 所以如果你想每次都往回看10分钟以重试，这里可以直接取 tenMinsAgoMs 和 currentSortSeq 的较小值）
+		if tenMinsAgoMs < currentSortSeq {
+			currentSortSeq = tenMinsAgoMs
 		}
 	}
 
@@ -205,27 +207,16 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, 
 		conditions = append(conditions, "m.local_type = ?")
 		args = append(args, model.MessageTypeText)
 
-		conditions = append(conditions, "m.create_time >= ?")
-		if MinCreateTime == 0 {
-			// 只获取当天的记录
-			args = append(args, today.Unix())
-		} else {
-			// 获取设定时间的记录
-			args = append(args, MinCreateTime)
-		}
-
-		// 添加 local_id 条件（防重复查询）
-		if lastID > 0 {
-			conditions = append(conditions, "m.local_id > ?")
-			args = append(args, lastID)
-		}
+		// 过滤出在 currentSortSeq 之后的消息
+		conditions = append(conditions, "m.sort_seq > ?")
+		args = append(args, currentSortSeq)
 
 		// 组合条件
 		if len(conditions) > 0 {
 			query += " WHERE " + strings.Join(conditions, " AND ")
 		}
 
-		query += " ORDER BY m.local_id ASC LIMIT ?"
+		query += " ORDER BY m.sort_seq ASC LIMIT ?"
 		args = append(args, batchSize)
 
 		// 执行GORM原始SQL查询
@@ -282,8 +273,8 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, 
 				break
 			}
 			if existCount > 0 {
-				// 已经存在，直接跳过并更新lastID
-				lastID = msgResult.LocalId
+				// 已经存在，直接跳过并更新 currentSortSeq
+				currentSortSeq = int64(msgResult.SortSeq)
 				continue
 			}
 
@@ -335,12 +326,10 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, 
 				break
 			}
 
-			// 更新最后处理的ID
-			lastID = msgResult.LocalId
+			// 更新最后处理的 sort_seq
+			currentSortSeq = int64(msgResult.SortSeq)
 		}
 
-		// 保存进度
-		dp.dbState.MessageTableMap[tableName] = lastID
 		totalCount += batchCount
 
 		if sendErr != nil {
@@ -353,12 +342,16 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, 
 		}
 	}
 
+	// 跑完一次后，将更新后的 currentSortSeq 保存回持久化状态。
+	// 下一次定时任务执行时，由于会取 Min(tenMinsAgoMs, currentSortSeq)，
+	// 从而实现了“每次执行都用10分钟的时间窗口滑动作为查询条件，且不会漏掉停机期间的消息”
+	dp.dbState.MessageTableMap[tableName] = currentSortSeq
+
 	if totalCount > 0 {
 		fmt.Println("update message: ", totalCount)
 		dp.logger.Debug("process message batch success",
 			zap.String("table", tableName),
 			zap.Int("totalCount", totalCount),
-			zap.Int64("max_local_id", lastID),
 		)
 	}
 
