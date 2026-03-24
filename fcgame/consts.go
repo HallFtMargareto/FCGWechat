@@ -9,6 +9,8 @@ import (
 	"github.com/bwmarrin/snowflake"
 )
 
+var Version = 100
+
 // Config 应用程序配置结构体
 type Config struct {
 	// WebSocket服务器配置
@@ -312,10 +314,10 @@ type FcgMessage struct {
 
 // FcgMessageModel 消息表数据模型
 type FcgMessageModel struct {
-	ID         uint      `gorm:"primarykey"`
-	DbCreateAt time.Time `gorm:"autoCreateTime"` // 数据库创建时间
-	SendStatus int       `gorm:"default:0"`      // 状态：0默认，1发送成功
-	SendRetryCount int   `gorm:"default:0"`      // 重发次数：超过阈值后不再重发
+	ID             uint      `gorm:"primarykey"`
+	DbCreateAt     time.Time `gorm:"autoCreateTime"` // 数据库创建时间
+	SendStatus     int       `gorm:"default:0"`      // 状态：0默认，1发送成功
+	SendRetryCount int       `gorm:"default:0"`      // 重发次数：超过阈值后不再重发
 
 	TenantId          uint   `json:"tenant_id"`
 	UserName          string `json:"user_name"`
