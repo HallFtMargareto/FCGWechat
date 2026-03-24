@@ -318,6 +318,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, 
 				Owner:             message.Owner,
 				Hash:              message.Hash,
 				SendStatus:        0, // 初始发送状态为0
+				SendRetryCount:    0,
 			}
 
 			if err := cdb.Create(&msgModel).Error; err != nil {

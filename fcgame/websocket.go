@@ -568,6 +568,20 @@ func (client *WebSocketClient) ResendFailedMessages() {
 					return
 				}
 
+				if msgModel.SendRetryCount >= 5 {
+					err = cdb.Exec("UPDATE fcg_message SET send_status = 99 WHERE id = ? AND send_status = 0", msgModel.ID).Error
+					if err != nil {
+						client.logger.Error("更新消息为不再重发失败", zap.Uint("id", msgModel.ID), zap.Error(err))
+					}
+					continue
+				}
+
+				err = cdb.Exec("UPDATE fcg_message SET send_retry_count = send_retry_count + 1 WHERE id = ? AND send_status = 0 AND send_retry_count < 5", msgModel.ID).Error
+				if err != nil {
+					client.logger.Error("更新消息重发次数失败", zap.Uint("id", msgModel.ID), zap.Error(err))
+					continue
+				}
+
 				plainContent, derr := DecryptMessageContent(msgModel.MessageContent)
 				if derr != nil {
 					plainContent = msgModel.MessageContent

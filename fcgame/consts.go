@@ -315,6 +315,7 @@ type FcgMessageModel struct {
 	ID         uint      `gorm:"primarykey"`
 	DbCreateAt time.Time `gorm:"autoCreateTime"` // 数据库创建时间
 	SendStatus int       `gorm:"default:0"`      // 状态：0默认，1发送成功
+	SendRetryCount int   `gorm:"default:0"`      // 重发次数：超过阈值后不再重发
 
 	TenantId          uint   `json:"tenant_id"`
 	UserName          string `json:"user_name"`
