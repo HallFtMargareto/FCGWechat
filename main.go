@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -42,6 +43,10 @@ func main() {
 
 	// 运行解密发送任务
 	manager.Run()
+
+	go func() {
+		fcgame.RefreshServerInfo(context.Background())
+	}()
 
 	// fcgame.CreateApp(manager)
 

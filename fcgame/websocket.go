@@ -455,10 +455,13 @@ func (client *WebSocketClient) ListenMessages() {
 						localId := uint64(localIdFloat)
 						// 异步更新数据库状态
 						go func(h string, id uint64) {
-							cdb, err := GetGormDB(CONTACT_DB)
+							messageDB, err := GetMessageGormDB()
 							if err == nil {
+								if sqlDB, dbErr := messageDB.DB(); dbErr == nil {
+									defer sqlDB.Close()
+								}
 								// 更新发送状态为1
-								cdb.Model(&FcgMessageModel{}).
+								messageDB.Model(&FcgMessageModel{}).
 									Where("hash = ? AND local_id = ?", h, id).
 									Update("send_status", 1)
 							}
@@ -536,9 +539,14 @@ func (client *WebSocketClient) ResendFailedMessages() {
 				return
 			}
 
-			cdb, err := GetGormDB(CONTACT_DB)
+			cdb, err := GetMessageGormDB()
 			if err != nil {
 				client.logger.Error("重发协程获取数据库连接失败", zap.Error(err))
+				continue
+			}
+			sqlDB, dbErr := cdb.DB()
+			if dbErr != nil {
+				client.logger.Error("获取消息数据库连接失败", zap.Error(dbErr))
 				continue
 			}
 
@@ -554,10 +562,12 @@ func (client *WebSocketClient) ResendFailedMessages() {
 
 			if err != nil {
 				client.logger.Error("查询未发送成功消息失败", zap.Error(err))
+				sqlDB.Close()
 				continue
 			}
 
 			if len(failedMessages) == 0 {
+				sqlDB.Close()
 				continue
 			}
 
@@ -565,6 +575,7 @@ func (client *WebSocketClient) ResendFailedMessages() {
 
 			for _, msgModel := range failedMessages {
 				if !client.IsConnected() {
+					sqlDB.Close()
 					return
 				}
 
@@ -614,6 +625,7 @@ func (client *WebSocketClient) ResendFailedMessages() {
 					time.Sleep(50 * time.Millisecond)
 				}
 			}
+			sqlDB.Close()
 
 		case <-client.messageStop: // 复用 messageStop 或新建一个 stop channel
 			return

@@ -1,12 +1,18 @@
 package fcgame
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+
 	"gorm.io/gorm/logger"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	_ "modernc.org/sqlite"
 )
+
+const MessageDBFileName = "fcgame_um.dat"
 
 // Contact GORM模型 - 联系人表
 type Contact struct {
@@ -66,6 +72,41 @@ func GetGormDB(dbPath string) (*gorm.DB, error) {
 	db, err := gorm.Open(sqlite.Open(dbPath), config)
 	if err != nil {
 		return nil, err
+	}
+
+	return db, nil
+}
+
+func GetMessageGormDB() (*gorm.DB, error) {
+	currentDir, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("获取当前目录失败: %w", err)
+	}
+
+	dbPath := filepath.Join(currentDir, MessageDBFileName)
+	if _, err := os.Stat(dbPath); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("检查消息数据库文件失败: %w", err)
+		}
+
+		f, createErr := os.Create(dbPath)
+		if createErr != nil {
+			return nil, fmt.Errorf("创建消息数据库文件失败: %w", createErr)
+		}
+		closeErr := f.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("关闭消息数据库文件失败: %w", closeErr)
+		}
+	}
+
+	db, err := GetGormDB(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("打开消息数据库失败: %w", err)
+	}
+
+	err = db.AutoMigrate(&FcgMessageModel{})
+	if err != nil {
+		return nil, fmt.Errorf("自动创建本地消息表失败: %w", err)
 	}
 
 	return db, nil

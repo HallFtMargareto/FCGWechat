@@ -120,24 +120,29 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 	defer sqlDB.Close()
 
 	// 初始化并连接联系人数据库
-	cdb, err := GetGormDB(CONTACT_DB)
+	contactDB, err := GetGormDB(CONTACT_DB)
 	if err != nil {
 		dp.logger.Error("打开联系人数据库失败", zap.Error(err))
 		return
 	}
-	cdbCN, err := cdb.DB()
+	contactDBConn, err := contactDB.DB()
 	if err != nil {
 		dp.logger.Error("获取联系人数据库连接失败", zap.Error(err))
 		return
 	}
-	defer cdbCN.Close()
+	defer contactDBConn.Close()
 
-	// 自动创建本地消息表
-	err = cdb.AutoMigrate(&FcgMessageModel{})
+	messageDB, err := GetMessageGormDB()
 	if err != nil {
-		dp.logger.Error("自动创建本地消息表失败", zap.Error(err))
+		dp.logger.Error("初始化消息数据库失败", zap.Error(err))
 		return
 	}
+	messageDBConn, err := messageDB.DB()
+	if err != nil {
+		dp.logger.Error("获取消息数据库连接失败", zap.Error(err))
+		return
+	}
+	defer messageDBConn.Close()
 
 	// 获取所有消息表
 	tables := dp.getMessageTablesWithGORM(db)
@@ -150,41 +155,43 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 
 	// 处理每个消息表
 	for _, table := range tables {
-		count := dp.processMessageTableWithGORM(db, cdb, table, dbFile, account)
+		count := dp.processMessageTableWithGORM(db, contactDB, messageDB, table, dbFile, account)
 		totalCount += count
 	}
 }
 
 // processMessageTableWithGORM 使用GORM处理单个消息表
-func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, tableName, dbFile string, account string) int {
-
-	// 获取当前时间及10分钟前的时间
-	now := time.Now()
-	tenMinsAgoMs := now.Add(-10*time.Minute).Unix() * 1000
-
-	// 获取当天零点
-	today := time.Date(
-		now.Year(), now.Month(), now.Day(),
-		0, 0, 0, 0, now.Location(),
-	)
-	todayMs := today.Unix() * 1000
+func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gorm.DB, messageDB *gorm.DB, tableName, dbFile string, account string) int {
 
 	// 分批处理消息数据，每次最多500条
 	const batchSize = 500
 	totalCount := 0
+
+	// 第一次启动（本地没有记录），以当天零点作为起始查询条件
+	// 获取当天零点
+	// 获取当前时间及10分钟前的时间
+	now := time.Now()
+	today := time.Date(
+		now.Year(), now.Month(), now.Day(),
+		0, 0, 0, 0, now.Location(),
+	)
+	todayStart := today.Unix() * 1000
 
 	// 尝试从持久化状态中获取最后处理的 sort_seq
 	var currentSortSeq int64
 	exists := false
 	if currentSortSeq, exists = dp.dbState.MessageTableMap[tableName]; !exists {
 		// 第一次启动（本地没有记录），以当天零点作为起始查询条件
-		currentSortSeq = todayMs
+		// 获取当天零点
+		// 获取当前时间及10分钟前的时间
+
+		currentSortSeq = todayStart
 	} else {
-		// 已经运行过，为了防止漏消息，我们比较持久化的 sort_seq 和 10分钟前的时间。
-		// 取较小的一个作为起点（但通常情况下，如果程序一直运行，持久化的 sort_seq 可能比10分钟前大，
-		// 所以如果你想每次都往回看10分钟以重试，这里可以直接取 tenMinsAgoMs 和 currentSortSeq 的较小值）
-		if tenMinsAgoMs < currentSortSeq {
-			currentSortSeq = tenMinsAgoMs
+		tenMinutesMillis := int64(10 * 60 * 1000)
+		if currentSortSeq > tenMinutesMillis {
+			currentSortSeq = currentSortSeq - tenMinutesMillis
+		} else {
+			currentSortSeq = todayStart
 		}
 	}
 
@@ -266,7 +273,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, 
 
 			// 查询本地消息表是否存在
 			var existCount int64
-			err := cdb.Model(&FcgMessageModel{}).Where("hash = ? AND local_id = ?", message.Hash, message.LocalId).Count(&existCount).Error
+			err := messageDB.Model(&FcgMessageModel{}).Where("hash = ? AND local_id = ?", message.Hash, message.LocalId).Count(&existCount).Error
 			if err != nil {
 				dp.logger.Error("查询本地消息记录失败", zap.Error(err))
 				sendErr = err
@@ -279,7 +286,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, 
 			}
 
 			var contact Contact
-			err = cdb.Raw("select * from contact where username = ?", message.UserName).Scan(&contact).Error
+			err = contactDB.Raw("select * from contact where username = ?", message.UserName).Scan(&contact).Error
 			if err != nil || contact.ID == 0 {
 				message.NickName = "未知用户"
 			} else {
@@ -312,7 +319,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, 
 				SendRetryCount:    0,
 			}
 
-			if err := cdb.Create(&msgModel).Error; err != nil {
+			if err := messageDB.Create(&msgModel).Error; err != nil {
 				dp.logger.Error("保存消息到本地数据库失败", zap.Error(err))
 				sendErr = err
 				break
@@ -328,9 +335,8 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, cdb *gorm.DB, 
 
 			// 更新最后处理的 sort_seq
 			currentSortSeq = int64(msgResult.SortSeq)
+			totalCount += 1
 		}
-
-		totalCount += batchCount
 
 		if sendErr != nil {
 			return totalCount

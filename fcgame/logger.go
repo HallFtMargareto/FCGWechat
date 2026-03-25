@@ -114,7 +114,8 @@ func sendErrorLogToServer(logData LogData) {
 	err := client.SendClientLog(logData)
 	if err != nil {
 		// 注意：这里不能调用Logger.Error，否则会造成循环调用
-		fmt.Printf("发送错误日志到服务器失败: %v\n", err)
+		fmt.Printf("处理错误日志失败: %v\n", err)
+		fmt.Printf("data: %+v\n", logData)
 	}
 }
 
