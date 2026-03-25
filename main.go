@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -10,6 +9,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/sjzar/chatlog/fcgame"
 	"go.uber.org/zap"
@@ -43,15 +43,10 @@ func main() {
 
 	// 运行解密发送任务
 	manager.Run()
+	fcgame.SafeRun(fcgame.RefreshServerInfo)
 
-	go func() {
-		fcgame.RefreshServerInfo(context.Background())
-	}()
-
-	// fcgame.CreateApp(manager)
-
+	time.Sleep(time.Second)
 	scanner := bufio.NewScanner(os.Stdin)
-
 	for {
 		fmt.Print("请输入口令 (exit退出): ")
 		if !scanner.Scan() { // 检查是否有输入

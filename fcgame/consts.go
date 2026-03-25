@@ -9,8 +9,6 @@ import (
 	"github.com/bwmarrin/snowflake"
 )
 
-var Version = 100
-
 // Config 应用程序配置结构体
 type Config struct {
 	// WebSocket服务器配置
@@ -67,6 +65,11 @@ type Config struct {
 }
 
 var (
+	//初始版本号
+	Version = 100
+
+	DomainRZ = true
+
 	// Snowflake 全局ID生成器实例
 	Snowflake *snowflake.Node
 	// snowflakeMutex 保护Snowflake的并发访问

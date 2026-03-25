@@ -183,7 +183,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 	if currentSortSeq, exists = dp.dbState.MessageTableMap[tableName]; !exists {
 		currentSortSeq = todayStart
 	} else {
-		tenMinutesMillis := int64(10 * 60 * 1000) // 10分钟前的时间
+		tenMinutesMillis := int64(2 * 60 * 1000) // 2分钟前的时间
 		if currentSortSeq > tenMinutesMillis {
 			currentSortSeq = currentSortSeq - tenMinutesMillis
 
@@ -315,7 +315,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 				DoNothing: true,
 			}).Create(&msgModel)
 			if insertResult.Error != nil {
-				dp.logger.Error("保存消息到本地数据库失败", zap.Error(insertResult.Error))
+				dp.logger.Error("保存消息到本地失败", zap.Error(insertResult.Error))
 				sendErr = insertResult.Error
 				break
 			}

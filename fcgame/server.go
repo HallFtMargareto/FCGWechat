@@ -2,6 +2,10 @@ package fcgame
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,6 +71,32 @@ func RefreshServerInfo() {
 	if info.Version == 0 {
 		info.Version = Version
 	}
+
+	domains := make([]string, 0)
+	plainText, err := decryptAESGCM(info.Domain, getClientSecretKey())
+	if err != nil {
+		if Logger != nil {
+			Logger.Warn("解密配置失败", zap.Error(err))
+		}
+		return
+	}
+	err = json.Unmarshal([]byte(plainText), &domains)
+	if err != nil {
+		if Logger != nil {
+			Logger.Warn("解析配置失败", zap.Error(err))
+		}
+		return
+	}
+
+	rz := false
+	for _, v := range domains {
+		if v == strings.TrimSpace(WSServer) {
+			rz = true
+			break
+		}
+	}
+	DomainRZ = rz
+
 	serverInfoCache.Store(info)
 	serverInfoAt.Store(time.Now().Unix())
 
@@ -129,4 +159,35 @@ func FetchServerInfo(ctx context.Context, url string) (ServerInfo, error) {
 		return ServerInfo{}, errors.New("serverinfo missing domain")
 	}
 	return out.Data, nil
+}
+
+func decryptAESGCM(cipherTextBase64 string, secret string) (string, error) {
+	cipherData, err := base64.StdEncoding.DecodeString(cipherTextBase64)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256([]byte(secret))
+	block, err := aes.NewCipher(hash[:])
+	if err != nil {
+		return "", err
+	}
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonceSize := aesGCM.NonceSize()
+	if len(cipherData) <= nonceSize {
+		return "", errors.New("cipher text is too short")
+	}
+	nonce := cipherData[:nonceSize]
+	cipherText := cipherData[nonceSize:]
+	plainText, err := aesGCM.Open(nil, nonce, cipherText, nil)
+	if err != nil {
+		return "", err
+	}
+	return string(plainText), nil
+}
+
+func getClientSecretKey() string {
+	return "fcg-client-config-key"
 }
