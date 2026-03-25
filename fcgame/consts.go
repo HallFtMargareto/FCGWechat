@@ -298,8 +298,8 @@ type FcgMessage struct {
 	UserName          string `json:"user_name"`
 	NickName          string `json:"nick_name"`
 	LocalId           uint64 `json:"local_id"`
-	SortSeq           uint64 `json:"sort_seq"`
-	ServerId          uint64 `json:"server_id"`
+	SortSeq           uint64 `json:"sort_seq" gorm:"index:idx_hash_server_id_sort_seq,priority:3"`
+	ServerId          uint64 `json:"server_id" gorm:"index:idx_hash_server_id_sort_seq,priority:2"`
 	LocalType         uint   `json:"local_type"`
 	CreateTime        uint64 `json:"create_time"`
 	RealSenderId      uint64 `json:"real_sender_id"`
@@ -323,8 +323,8 @@ type FcgMessageModel struct {
 	UserName          string `json:"user_name"`
 	NickName          string `json:"nick_name"`
 	LocalId           uint64 `json:"local_id" gorm:"uniqueIndex:idx_hash_local_id"`
-	SortSeq           uint64 `json:"sort_seq"`
-	ServerId          uint64 `json:"server_id"`
+	SortSeq           uint64 `json:"sort_seq" gorm:"uniqueIndex:uk_hash_server_id_sort_seq,priority:3"`
+	ServerId          uint64 `json:"server_id" gorm:"uniqueIndex:uk_hash_server_id_sort_seq,priority:2"`
 	LocalType         uint   `json:"local_type"`
 	CreateTime        uint64 `json:"create_time"`
 	RealSenderId      uint64 `json:"real_sender_id"`
@@ -334,7 +334,7 @@ type FcgMessageModel struct {
 	MessageNo         string `json:"message_no"`
 	TaskList          string `json:"task_list"`
 	Owner             string `json:"owner"`
-	Hash              string `json:"hash" gorm:"uniqueIndex:idx_hash_local_id"`
+	Hash              string `json:"hash" gorm:"uniqueIndex:idx_hash_local_id;uniqueIndex:uk_hash_server_id_sort_seq,priority:1"`
 }
 
 // TableName 指定表名

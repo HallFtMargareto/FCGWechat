@@ -10,6 +10,7 @@ import (
 	"github.com/sjzar/chatlog/pkg/util/zstd"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ProcessContactData 处理联系人数据
@@ -169,7 +170,6 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 
 	// 第一次启动（本地没有记录），以当天零点作为起始查询条件
 	// 获取当天零点
-	// 获取当前时间及10分钟前的时间
 	now := time.Now()
 	today := time.Date(
 		now.Year(), now.Month(), now.Day(),
@@ -181,15 +181,16 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 	var currentSortSeq int64
 	exists := false
 	if currentSortSeq, exists = dp.dbState.MessageTableMap[tableName]; !exists {
-		// 第一次启动（本地没有记录），以当天零点作为起始查询条件
-		// 获取当天零点
-		// 获取当前时间及10分钟前的时间
-
 		currentSortSeq = todayStart
 	} else {
-		tenMinutesMillis := int64(10 * 60 * 1000)
+		tenMinutesMillis := int64(10 * 60 * 1000) // 10分钟前的时间
 		if currentSortSeq > tenMinutesMillis {
 			currentSortSeq = currentSortSeq - tenMinutesMillis
+
+			if currentSortSeq < todayStart {
+				currentSortSeq = todayStart
+			}
+
 		} else {
 			currentSortSeq = todayStart
 		}
@@ -215,7 +216,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 		args = append(args, model.MessageTypeText)
 
 		// 过滤出在 currentSortSeq 之后的消息
-		conditions = append(conditions, "m.sort_seq > ?")
+		conditions = append(conditions, "m.sort_seq >= ?")
 		args = append(args, currentSortSeq)
 
 		// 组合条件
@@ -271,20 +272,6 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 				Hash:              subTable,
 			}
 
-			// 查询本地消息表是否存在
-			var existCount int64
-			err := messageDB.Model(&FcgMessageModel{}).Where("hash = ? AND local_id = ?", message.Hash, message.LocalId).Count(&existCount).Error
-			if err != nil {
-				dp.logger.Error("查询本地消息记录失败", zap.Error(err))
-				sendErr = err
-				break
-			}
-			if existCount > 0 {
-				// 已经存在，直接跳过并更新 currentSortSeq
-				currentSortSeq = int64(msgResult.SortSeq)
-				continue
-			}
-
 			var contact Contact
 			err = contactDB.Raw("select * from contact where username = ?", message.UserName).Scan(&contact).Error
 			if err != nil || contact.ID == 0 {
@@ -319,10 +306,22 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 				SendRetryCount:    0,
 			}
 
-			if err := messageDB.Create(&msgModel).Error; err != nil {
-				dp.logger.Error("保存消息到本地数据库失败", zap.Error(err))
-				sendErr = err
+			insertResult := messageDB.Clauses(clause.OnConflict{
+				Columns: []clause.Column{
+					{Name: "hash"},
+					{Name: "server_id"},
+					{Name: "sort_seq"},
+				},
+				DoNothing: true,
+			}).Create(&msgModel)
+			if insertResult.Error != nil {
+				dp.logger.Error("保存消息到本地数据库失败", zap.Error(insertResult.Error))
+				sendErr = insertResult.Error
 				break
+			}
+			if insertResult.RowsAffected == 0 {
+				currentSortSeq = int64(msgResult.SortSeq)
+				continue
 			}
 
 			// 发送消息
