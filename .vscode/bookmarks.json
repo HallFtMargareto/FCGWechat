@@ -9,9 +9,19 @@
 					"label": "SOCKET-添加响应参数"
 				},
 				{
-					"line": 440,
+					"line": 444,
 					"column": 0,
 					"label": "接收回调数据"
+				}
+			]
+		},
+		{
+			"path": "fcgame/processor.go",
+			"bookmarks": [
+				{
+					"line": 288,
+					"column": 0,
+					"label": "解密数据"
 				}
 			]
 		}

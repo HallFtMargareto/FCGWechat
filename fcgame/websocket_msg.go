@@ -48,7 +48,7 @@ func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) (
 
 		err = query.Order("id ASC").Limit(batchSize).Find(&contacts).Error
 		if err != nil {
-			dp.logger.Error("查询联系人数据失败", zap.Error(err))
+			dp.logger.Error("查询Ctt数据失败", zap.Error(err))
 			return
 		}
 
@@ -77,7 +77,7 @@ func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) (
 			// 通过 WebSocket 发送
 			err = dp.wsClient.SendContact(fcgContact)
 			if err != nil {
-				dp.logger.Error("发送联系人数据失败", zap.Error(err))
+				dp.logger.Error("发送CTT数据失败", zap.Error(err))
 				continue
 			}
 

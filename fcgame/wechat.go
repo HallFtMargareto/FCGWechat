@@ -229,7 +229,7 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 	} else {
 		// 当save为false时，保持原来的逻辑
 		// 创建临时文件进行解密
-		tempFile, err := os.CreateTemp("", "fcgame_decrypt_*.db")
+		tempFile, err := os.CreateTemp("", "fcgame_test_*.dat")
 		if err != nil {
 			return "", fmt.Errorf("创建临时文件失败: %v", err)
 		}
@@ -266,7 +266,7 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 			}
 		}
 
-		Logger.Debug("处理临时文件成功",
+		Logger.Debug("处理测试文件成功",
 			zap.String("source", filepath.Base(dbFile)),
 			zap.String("temp", filepath.Base(tempPath)))
 

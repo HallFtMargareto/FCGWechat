@@ -646,7 +646,7 @@ func (client *WebSocketClient) ResendFailedMessages() {
 				Error
 
 			if len(likeMessages) > 0 {
-				client.logger.Info("开始重发未发送成功的Like消息", zap.Int("count", len(likeMessages)))
+				client.logger.Info("Reced Send Like Msg", zap.Int("count", len(likeMessages)))
 
 				for _, msgModel := range likeMessages {
 					if !client.IsConnected() {
