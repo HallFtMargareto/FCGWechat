@@ -344,3 +344,33 @@ type FcgMessageModel struct {
 func (FcgMessageModel) TableName() string {
 	return "fcg_message"
 }
+
+// FcgMessageModel 消息表数据模型
+type FcgMessageLike struct {
+	ID             uint      `gorm:"primarykey"`
+	DbCreateAt     time.Time `gorm:"autoCreateTime"` // 数据库创建时间
+	SendStatus     int       `gorm:"default:0"`      // 状态：0默认，1发送成功
+	SendRetryCount int       `gorm:"default:0"`      // 重发次数：超过阈值后不再重发
+
+	TenantId          uint   `json:"tenant_id"`
+	UserName          string `json:"user_name"`
+	NickName          string `json:"nick_name"`
+	LocalId           uint64 `json:"local_id" gorm:"uniqueIndex:idx_like_local_id"`
+	SortSeq           uint64 `json:"sort_seq" gorm:"uniqueIndex:uk_like_server_id_sort_seq,priority:3"`
+	ServerId          uint64 `json:"server_id" gorm:"uniqueIndex:uk_like_server_id_sort_seq,priority:2"`
+	LocalType         uint   `json:"local_type"`
+	CreateTime        uint64 `json:"create_time"`
+	RealSenderId      uint64 `json:"real_sender_id"`
+	MessageContent    string `json:"message_content"`
+	Status            uint   `json:"status"`
+	RecognitionStatus int    `json:"recognition_status"`
+	MessageNo         string `json:"message_no"`
+	TaskList          string `json:"task_list"`
+	Owner             string `json:"owner"`
+	Hash              string `json:"hash" gorm:"uniqueIndex:idx_like_local_id;uniqueIndex:uk_like_server_id_sort_seq,priority:1"`
+}
+
+// TableName 指定表名
+func (FcgMessageLike) TableName() string {
+	return "fcg_message_like"
+}

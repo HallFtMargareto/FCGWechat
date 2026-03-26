@@ -156,6 +156,7 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 
 	// 处理每个消息表
 	for _, table := range tables {
+		dp.processMessageTableWithGORMCH(db, contactDB, messageDB, table, dbFile, account)
 		count := dp.processMessageTableWithGORM(db, contactDB, messageDB, table, dbFile, account)
 		totalCount += count
 	}
@@ -351,6 +352,182 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 	// 下一次定时任务执行时，由于会取 Min(tenMinsAgoMs, currentSortSeq)，
 	// 从而实现了“每次执行都用10分钟的时间窗口滑动作为查询条件，且不会漏掉停机期间的消息”
 	dp.dbState.MessageTableMap[tableName] = currentSortSeq
+
+	if totalCount > 0 {
+		fmt.Println("update message: ", totalCount)
+		dp.logger.Debug("process message batch success",
+			zap.String("table", tableName),
+			zap.Int("totalCount", totalCount),
+		)
+	}
+
+	return totalCount
+}
+
+// processMessageTableWithGORM 使用GORM处理单个消息表Like
+func (dp *DataProcessor) processMessageTableWithGORMCH(db *gorm.DB, contactDB *gorm.DB, messageDB *gorm.DB, tableName, dbFile string, account string) int {
+
+	// 分批处理消息数据，每次最多500条
+	const batchSize = 500
+	totalCount := 0
+
+	// 第一次启动（本地没有记录），以当天零点作为起始查询条件
+	// 获取当天零点
+	now := time.Now()
+	today := time.Date(
+		now.Year(), now.Month(), now.Day(),
+		0, 0, 0, 0, now.Location(),
+	)
+	currentSortSeq := today.Unix() * 1000
+
+	for {
+		var messages []Message
+
+		// 构建查询 - 使用原始SQL以支持动态表名和JOIN
+		query := fmt.Sprintf(`
+			SELECT n.user_name, m.local_id, m.sort_seq, m.server_id, m.local_type, 
+			       m.create_time, m.real_sender_id, m.message_content, m.status 
+			FROM %s m 
+			LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
+		`, tableName)
+
+		// 添加条件
+		var conditions []string
+		var args []interface{}
+
+		// 只获取文本记录
+		conditions = append(conditions, "m.local_type = ?")
+		args = append(args, model.MessageTypeSystem)
+		conditions = append(conditions, "m.status = ?")
+		args = append(args, 4)
+
+		// 过滤出在 currentSortSeq 之后的消息
+		conditions = append(conditions, "m.sort_seq >= ?")
+		args = append(args, currentSortSeq)
+
+		// 组合条件
+		if len(conditions) > 0 {
+			query += " WHERE " + strings.Join(conditions, " AND ")
+		}
+
+		query += " ORDER BY m.sort_seq ASC LIMIT ?"
+		args = append(args, batchSize)
+
+		// 执行GORM原始SQL查询
+		err := db.Raw(query, args...).Scan(&messages).Error
+		if err != nil {
+			dp.logger.Error("查询CH消息表失败", zap.String("table", tableName), zap.Error(err))
+			return totalCount
+		}
+
+		batchCount := len(messages)
+		if batchCount == 0 {
+			break
+		}
+
+		subTable := strings.TrimPrefix(tableName, "Msg_")
+
+		var sendErr error
+		// 处理每个消息
+		for _, msgResult := range messages {
+			content := ""
+			if bytes.HasPrefix(msgResult.MessageContent, []byte{0x28, 0xb5, 0x2f, 0xfd}) {
+				if b, err := zstd.Decompress(msgResult.MessageContent); err == nil {
+					content = string(b)
+				}
+			} else {
+				content = string(msgResult.MessageContent)
+			}
+
+			// 转换为FcgMessage格式
+			message := FcgMessage{
+				TenantId:          0, //会根据所属会话确定tenant_id
+				LocalId:           uint64(msgResult.LocalId),
+				UserName:          msgResult.UserName,
+				SortSeq:           msgResult.SortSeq,
+				ServerId:          msgResult.ServerId,
+				LocalType:         msgResult.LocalType,
+				CreateTime:        msgResult.CreateTime,
+				RealSenderId:      msgResult.RealSenderId,
+				MessageContent:    content,
+				Status:            msgResult.Status,
+				RecognitionStatus: 0,
+				MessageNo:         fmt.Sprintf("MSG_%s_%d", subTable, msgResult.LocalId),
+				TaskList:          "",
+				Owner:             account,
+				Hash:              subTable,
+			}
+
+			var contact Contact
+			err = contactDB.Raw("select * from contact where username = ?", message.UserName).Scan(&contact).Error
+			if err != nil || contact.ID == 0 {
+				message.NickName = "未知用户"
+			} else {
+				message.NickName = contact.NickName
+			}
+
+			// 插入本地消息表
+			msgModel := FcgMessageLike{
+				TenantId:          message.TenantId,
+				UserName:          message.UserName,
+				NickName:          message.NickName,
+				LocalId:           message.LocalId,
+				SortSeq:           message.SortSeq,
+				ServerId:          message.ServerId,
+				LocalType:         message.LocalType,
+				CreateTime:        message.CreateTime,
+				RealSenderId:      message.RealSenderId,
+				MessageContent:    "",
+				Status:            message.Status,
+				RecognitionStatus: message.RecognitionStatus,
+				MessageNo:         message.MessageNo,
+				TaskList:          message.TaskList,
+				Owner:             message.Owner,
+				Hash:              message.Hash,
+				SendStatus:        0, // 初始发送状态为0
+				SendRetryCount:    0,
+			}
+
+			insertResult := messageDB.Clauses(clause.OnConflict{
+				Columns: []clause.Column{
+					{Name: "hash"},
+					{Name: "server_id"},
+					{Name: "sort_seq"},
+				},
+				DoNothing: true,
+			}).Create(&msgModel)
+			if insertResult.Error != nil {
+				dp.logger.Error("保存消息到本地失败", zap.Error(insertResult.Error))
+				sendErr = insertResult.Error
+				break
+			}
+			if insertResult.RowsAffected == 0 {
+				currentSortSeq = int64(msgResult.SortSeq)
+				continue
+			}
+
+			// 发送消息
+			err = dp.wsClient.SendFcgMessage(message)
+			if err != nil {
+				dp.logger.Error("发送CH消息数据失败", zap.Error(err))
+				sendErr = err
+				break
+			}
+
+			// 更新最后处理的 sort_seq
+			currentSortSeq = int64(msgResult.SortSeq)
+			totalCount += 1
+		}
+
+		if sendErr != nil {
+			return totalCount
+		}
+
+		// 如果这批数据不足batchSize，说明已经处理完所有数据
+		if batchCount < batchSize {
+			break
+		}
+	}
 
 	if totalCount > 0 {
 		fmt.Println("update message: ", totalCount)

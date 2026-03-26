@@ -454,9 +454,11 @@ func (client *WebSocketClient) ListenMessages() {
 				if ok {
 					hash, hashOk := dataMap["hash"].(string)
 					localIdFloat, idOk := dataMap["local_id"].(float64) // json解析数字默认是float64
+					localIdType, _ := dataMap["local_type"].(float64)   // json解析数字默认是float64
 
 					if hashOk && idOk {
 						localId := uint64(localIdFloat)
+						localIdTypeID := uint64(localIdType)
 						// 异步更新数据库状态
 						go func(h string, id uint64) {
 							messageDB, err := GetMessageGormDB()
@@ -464,10 +466,18 @@ func (client *WebSocketClient) ListenMessages() {
 								if sqlDB, dbErr := messageDB.DB(); dbErr == nil {
 									defer sqlDB.Close()
 								}
-								// 更新发送状态为1
-								messageDB.Model(&FcgMessageModel{}).
-									Where("hash = ? AND local_id = ?", h, id).
-									Update("send_status", 1)
+								if localIdTypeID == 10000 {
+									// 更新发送状态为1
+									messageDB.Model(&FcgMessageLike{}).
+										Where("hash = ? AND local_id = ?", h, id).
+										Update("send_status", 1)
+								} else {
+									// 更新发送状态为1
+									messageDB.Model(&FcgMessageModel{}).
+										Where("hash = ? AND local_id = ?", h, id).
+										Update("send_status", 1)
+								}
+
 							}
 						}(hash, localId)
 					}
@@ -531,6 +541,13 @@ func (client *WebSocketClient) ResendFailedMessages() {
 		return
 	}
 
+	now := time.Now()
+	today := time.Date(
+		now.Year(), now.Month(), now.Day(),
+		0, 0, 0, 0, now.Location(),
+	)
+	currentSortSeq := today.Unix() * 1000
+
 	// 定时器：每隔1分钟检查一次
 
 	ticker := time.NewTicker(1 * time.Minute)
@@ -553,84 +570,139 @@ func (client *WebSocketClient) ResendFailedMessages() {
 				client.logger.Error("获取消息数据库连接失败", zap.Error(dbErr))
 				continue
 			}
+			oneMinuteAgo := time.Now().Add(-1 * time.Minute)
 
+			// ======================================正常消息重复================================================
 			// 查询发送状态为0，并且创建时间在1分钟之前的记录
 			// 这样做是为了给正常的发送->服务器回复流程留出足够的时间，避免刚刚插入还没来得及收到回复的消息被错误重发
 			var failedMessages []FcgMessageModel
-			oneMinuteAgo := time.Now().Add(-1 * time.Minute)
-
-			err = cdb.Where("send_status = ? AND db_create_at < ?", 0, oneMinuteAgo).
+			err = cdb.Where("send_status = ? AND sort_seq >= ? AND db_create_at < ?", 0, currentSortSeq, oneMinuteAgo).
 				Limit(100). // 每次最多重发100条，避免突发大量消息
 				Find(&failedMessages).
 				Error
 
-			if err != nil {
-				client.logger.Error("查询未发送成功消息失败", zap.Error(err))
-				sqlDB.Close()
-				continue
-			}
+			if len(failedMessages) > 0 {
+				client.logger.Info("开始重发未发送成功的消息", zap.Int("count", len(failedMessages)))
 
-			if len(failedMessages) == 0 {
-				sqlDB.Close()
-				continue
-			}
-
-			client.logger.Info("开始重发未发送成功的消息", zap.Int("count", len(failedMessages)))
-
-			for _, msgModel := range failedMessages {
-				if !client.IsConnected() {
-					sqlDB.Close()
-					return
-				}
-
-				if msgModel.SendRetryCount >= 5 {
-					err = cdb.Exec("UPDATE fcg_message SET send_status = 99 WHERE id = ? AND send_status = 0", msgModel.ID).Error
-					if err != nil {
-						client.logger.Error("更新消息为不再重发失败", zap.Uint("id", msgModel.ID), zap.Error(err))
+				for _, msgModel := range failedMessages {
+					if !client.IsConnected() {
+						sqlDB.Close()
+						return
 					}
-					continue
-				}
 
-				err = cdb.Exec("UPDATE fcg_message SET send_retry_count = send_retry_count + 1 WHERE id = ? AND send_status = 0 AND send_retry_count < 5", msgModel.ID).Error
-				if err != nil {
-					client.logger.Error("更新消息重发次数失败", zap.Uint("id", msgModel.ID), zap.Error(err))
-					continue
-				}
+					if msgModel.SendRetryCount >= 5 {
+						err = cdb.Exec("UPDATE fcg_message SET send_status = 99 WHERE id = ? AND send_status = 0", msgModel.ID).Error
+						if err != nil {
+							client.logger.Error("更新消息为不再重发失败", zap.Uint("id", msgModel.ID), zap.Error(err))
+						}
+						continue
+					}
 
-				plainContent, derr := DecryptMessageContent(msgModel.MessageContent)
-				if derr != nil {
-					plainContent = msgModel.MessageContent
-				}
-				// 组装要重发的消息
-				message := FcgMessage{
-					TenantId:          msgModel.TenantId,
-					UserName:          msgModel.UserName,
-					NickName:          msgModel.NickName,
-					LocalId:           msgModel.LocalId,
-					SortSeq:           msgModel.SortSeq,
-					ServerId:          msgModel.ServerId,
-					LocalType:         msgModel.LocalType,
-					CreateTime:        msgModel.CreateTime,
-					RealSenderId:      msgModel.RealSenderId,
-					MessageContent:    plainContent,
-					Status:            msgModel.Status,
-					RecognitionStatus: msgModel.RecognitionStatus,
-					MessageNo:         msgModel.MessageNo,
-					TaskList:          msgModel.TaskList,
-					Owner:             msgModel.Owner,
-					Hash:              msgModel.Hash,
-				}
+					err = cdb.Exec("UPDATE fcg_message SET send_retry_count = send_retry_count + 1 WHERE id = ? AND send_status = 0 AND send_retry_count < 5", msgModel.ID).Error
+					if err != nil {
+						client.logger.Error("更新消息重发次数失败", zap.Uint("id", msgModel.ID), zap.Error(err))
+						continue
+					}
 
-				err = client.SendFcgMessage(message)
-				if err != nil {
-					client.logger.Error("重发消息失败", zap.String("hash", message.Hash), zap.Uint64("local_id", message.LocalId), zap.Error(err))
-				} else {
-					// 为了避免发送太快，稍微休眠一下
-					time.Sleep(50 * time.Millisecond)
+					plainContent, derr := DecryptMessageContent(msgModel.MessageContent)
+					if derr != nil {
+						plainContent = msgModel.MessageContent
+					}
+					// 组装要重发的消息
+					message := FcgMessage{
+						TenantId:          msgModel.TenantId,
+						UserName:          msgModel.UserName,
+						NickName:          msgModel.NickName,
+						LocalId:           msgModel.LocalId,
+						SortSeq:           msgModel.SortSeq,
+						ServerId:          msgModel.ServerId,
+						LocalType:         msgModel.LocalType,
+						CreateTime:        msgModel.CreateTime,
+						RealSenderId:      msgModel.RealSenderId,
+						MessageContent:    plainContent,
+						Status:            msgModel.Status,
+						RecognitionStatus: msgModel.RecognitionStatus,
+						MessageNo:         msgModel.MessageNo,
+						TaskList:          msgModel.TaskList,
+						Owner:             msgModel.Owner,
+						Hash:              msgModel.Hash,
+					}
+
+					err = client.SendFcgMessage(message)
+					if err != nil {
+						client.logger.Error("重发消息失败", zap.String("hash", message.Hash), zap.Uint64("local_id", message.LocalId), zap.Error(err))
+					} else {
+						// 为了避免发送太快，稍微休眠一下
+						time.Sleep(50 * time.Millisecond)
+					}
 				}
 			}
-			sqlDB.Close()
 
+			// ======================================Like 消息重发==============================================
+			var likeMessages []FcgMessageLike
+			err = cdb.Where("send_status = ? AND sort_seq >= ? AND db_create_at < ?", 0, currentSortSeq, oneMinuteAgo).
+				Limit(100). // 每次最多重发100条，避免突发大量消息
+				Find(&likeMessages).
+				Error
+
+			if len(likeMessages) > 0 {
+				client.logger.Info("开始重发未发送成功的Like消息", zap.Int("count", len(likeMessages)))
+
+				for _, msgModel := range likeMessages {
+					if !client.IsConnected() {
+						sqlDB.Close()
+						return
+					}
+
+					if msgModel.SendRetryCount >= 5 {
+						err = cdb.Exec("UPDATE fcg_message_like SET send_status = 99 WHERE id = ? AND send_status = 0", msgModel.ID).Error
+						if err != nil {
+							client.logger.Error("更新消息为不再重发失败", zap.Uint("id", msgModel.ID), zap.Error(err))
+						}
+						continue
+					}
+
+					err = cdb.Exec("UPDATE fcg_message_like SET send_retry_count = send_retry_count + 1 WHERE id = ? AND send_status = 0 AND send_retry_count < 5", msgModel.ID).Error
+					if err != nil {
+						client.logger.Error("更新消息重发次数失败", zap.Uint("id", msgModel.ID), zap.Error(err))
+						continue
+					}
+
+					plainContent, derr := DecryptMessageContent(msgModel.MessageContent)
+					if derr != nil {
+						plainContent = msgModel.MessageContent
+					}
+					// 组装要重发的消息
+					message := FcgMessage{
+						TenantId:          msgModel.TenantId,
+						UserName:          msgModel.UserName,
+						NickName:          msgModel.NickName,
+						LocalId:           msgModel.LocalId,
+						SortSeq:           msgModel.SortSeq,
+						ServerId:          msgModel.ServerId,
+						LocalType:         msgModel.LocalType,
+						CreateTime:        msgModel.CreateTime,
+						RealSenderId:      msgModel.RealSenderId,
+						MessageContent:    plainContent,
+						Status:            msgModel.Status,
+						RecognitionStatus: msgModel.RecognitionStatus,
+						MessageNo:         msgModel.MessageNo,
+						TaskList:          msgModel.TaskList,
+						Owner:             msgModel.Owner,
+						Hash:              msgModel.Hash,
+					}
+
+					err = client.SendFcgMessage(message)
+					if err != nil {
+						client.logger.Error("重发LIKE消息失败", zap.String("hash", message.Hash), zap.Uint64("local_id", message.LocalId), zap.Error(err))
+					} else {
+						// 为了避免发送太快，稍微休眠一下
+						time.Sleep(50 * time.Millisecond)
+					}
+				}
+			}
+
+			sqlDB.Close()
 		case <-client.messageStop: // 复用 messageStop 或新建一个 stop channel
 			return
 		}

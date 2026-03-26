@@ -108,6 +108,10 @@ func GetMessageGormDB() (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("自动创建本地消息表失败: %w", err)
 	}
+	err = db.AutoMigrate(&FcgMessageLike{})
+	if err != nil {
+		return nil, fmt.Errorf("自动创建本地消息Like表失败: %w", err)
+	}
 
 	return db, nil
 }
