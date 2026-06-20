@@ -66,7 +66,7 @@ type Config struct {
 
 var (
 	//初始版本号
-	Version = 100
+	Version = 101
 
 	DomainRZ = true
 
@@ -325,9 +325,9 @@ type FcgMessageModel struct {
 	TenantId          uint   `json:"tenant_id"`
 	UserName          string `json:"user_name"`
 	NickName          string `json:"nick_name"`
-	LocalId           uint64 `json:"local_id" gorm:"uniqueIndex:idx_hash_local_id"`
-	SortSeq           uint64 `json:"sort_seq" gorm:"uniqueIndex:uk_hash_server_id_sort_seq,priority:3"`
-	ServerId          uint64 `json:"server_id" gorm:"uniqueIndex:uk_hash_server_id_sort_seq,priority:2"`
+	LocalId           uint64 `json:"local_id" gorm:"index:idx_local_sort_server,priority:1"`
+	SortSeq           uint64 `json:"sort_seq" gorm:"index:idx_local_sort_server,priority:2"`
+	ServerId          uint64 `json:"server_id" gorm:"index:idx_local_sort_server,priority:3"`
 	LocalType         uint   `json:"local_type"`
 	CreateTime        uint64 `json:"create_time"`
 	RealSenderId      uint64 `json:"real_sender_id"`
@@ -337,7 +337,7 @@ type FcgMessageModel struct {
 	MessageNo         string `json:"message_no"`
 	TaskList          string `json:"task_list"`
 	Owner             string `json:"owner"`
-	Hash              string `json:"hash" gorm:"uniqueIndex:idx_hash_local_id;uniqueIndex:uk_hash_server_id_sort_seq,priority:1"`
+	Hash              string `json:"hash"`
 }
 
 // TableName 指定表名
@@ -355,9 +355,9 @@ type FcgMessageLike struct {
 	TenantId          uint   `json:"tenant_id"`
 	UserName          string `json:"user_name"`
 	NickName          string `json:"nick_name"`
-	LocalId           uint64 `json:"local_id" gorm:"uniqueIndex:idx_like_local_id"`
-	SortSeq           uint64 `json:"sort_seq" gorm:"uniqueIndex:uk_like_server_id_sort_seq,priority:3"`
-	ServerId          uint64 `json:"server_id" gorm:"uniqueIndex:uk_like_server_id_sort_seq,priority:2"`
+	LocalId           uint64 `json:"local_id" gorm:"index:idx_lk_local_sort_server,priority:1"`
+	SortSeq           uint64 `json:"sort_seq" gorm:"index:idx_lk_local_sort_server,priority:2"`
+	ServerId          uint64 `json:"server_id" gorm:"index:idx_lk_local_sort_server,priority:3"`
 	LocalType         uint   `json:"local_type"`
 	CreateTime        uint64 `json:"create_time"`
 	RealSenderId      uint64 `json:"real_sender_id"`
@@ -367,7 +367,7 @@ type FcgMessageLike struct {
 	MessageNo         string `json:"message_no"`
 	TaskList          string `json:"task_list"`
 	Owner             string `json:"owner"`
-	Hash              string `json:"hash" gorm:"uniqueIndex:idx_like_local_id;uniqueIndex:uk_like_server_id_sort_seq,priority:1"`
+	Hash              string `json:"hash"`
 }
 
 // TableName 指定表名

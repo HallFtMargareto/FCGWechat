@@ -124,20 +124,20 @@ func (client *WebSocketClient) Run() {
 		// 4. 清理旧的连接和协程
 		client.isConnected = false // 标记连接为断开状态
 
-		// 保存未发送的消息
-		client.saveUnsentMessages()
-
 		// 关闭连接，这会导致其他协程也退出
 		if client.conn != nil {
 			client.conn.Close()
 			client.conn = nil
 		}
 
-		// 关闭sendChan来停止写协程（如果还没有停止的话）
+		// 先关闭 sendChan 来停止写协程
 		close(client.sendChan)
 
 		// 等待一小段时间让其他协程有机会退出
 		time.Sleep(100 * time.Millisecond)
+
+		// 保存未发送的消息（在关闭sendChan之后，此时可以安全读取）
+		client.saveUnsentMessages()
 
 		// 5. 准备下一次重连
 		if client.config.Reconnect && !client.isShutdown {
@@ -355,18 +355,18 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 		return fmt.Errorf("序列化消息失败: %v", err)
 	}
 
-	// 检查连接状态
-	if !client.IsConnected() {
-		return fmt.Errorf("客户端未连接")
-	}
-
 	// 将消息添加到待发送队列
 	client.addPendingMessage(msgBytes)
 
-	// 如果连接正常，直接发送
-	client.sendChan <- msgBytes
+	// 检查连接状态
+	if client.IsConnected() {
+		// 如果连接正常，直接发送
+		client.sendChan <- msgBytes
 
-	return nil
+		return nil
+	}
+
+	return fmt.Errorf("客户端未连接")
 }
 
 func (client *WebSocketClient) SendContact(contact FcgContact) error {
@@ -726,8 +726,13 @@ func (client *WebSocketClient) Close() {
 	client.isShutdown = true
 	client.isConnected = false
 
-	// 保存未发送的消息
-	client.saveUnsentMessages()
+	// 先关闭 sendChan 来停止写协程
+	select {
+	case <-client.sendChan:
+		// 通道已关闭
+	default:
+		close(client.sendChan)
+	}
 
 	// 停止心跳和消息监听
 	client.StopHeartbeat()
@@ -763,13 +768,11 @@ func (client *WebSocketClient) Close() {
 		close(client.errorChan)
 	}
 
-	// 关闭sendChan，停止写协程
-	select {
-	case <-client.sendChan:
-		// 通道已关闭
-	default:
-		close(client.sendChan)
-	}
+	// 等待一小段时间让其他协程有机会退出
+	time.Sleep(100 * time.Millisecond)
+
+	// 保存未发送的消息（在关闭sendChan之后，此时可以安全读取）
+	client.saveUnsentMessages()
 
 	pendingCount := client.getPendingMessageCount()
 	if pendingCount > 0 {
@@ -789,18 +792,10 @@ func (client *WebSocketClient) StartWriter() {
 			fmt.Println("空消息")
 			continue
 		}
-		if !client.IsConnected() {
-			client.logger.Error("连接已断开")
-			client.isConnected = false
-			return
-		}
-		client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
-		err := client.conn.WriteMessage(websocket.TextMessage, msg)
-		client.conn.SetWriteDeadline(time.Time{}) // 清除超时
-
+		// 使用统一的 write() 方法（带锁保护）
+		err := client.write(websocket.TextMessage, msg)
 		if err != nil {
 			client.logger.Error("发送消息失败:", zap.Error(err))
-			client.isConnected = false
 			return
 		}
 
@@ -822,7 +817,7 @@ func (client *WebSocketClient) addPendingMessage(msg []byte) {
 	}
 
 	client.pendingMessages = append(client.pendingMessages, msg)
-	client.logger.Debug("消息已添加到待发送缓存", zap.Int("缓存消息数", len(client.pendingMessages)))
+	// client.logger.Debug("消息已添加到待发送缓存", zap.Int("缓存消息数", len(client.pendingMessages)))
 }
 
 // removePendingMessage 从待发送缓存中移除消息
@@ -834,7 +829,7 @@ func (client *WebSocketClient) removePendingMessage(msg []byte) {
 		if string(pending) == string(msg) {
 			// 移除该消息
 			client.pendingMessages = append(client.pendingMessages[:i], client.pendingMessages[i+1:]...)
-			client.logger.Debug("消息已从待发送缓存中移除", zap.Int("剩余缓存消息数", len(client.pendingMessages)))
+			// client.logger.Debug("消息已从待发送缓存中移除", zap.Int("剩余缓存消息数", len(client.pendingMessages)))
 			break
 		}
 	}
@@ -887,29 +882,42 @@ func (client *WebSocketClient) sendPendingMessages() {
 
 // saveUnsentMessages 保存未发送的消息（在连接断开时调用）
 func (client *WebSocketClient) saveUnsentMessages() {
-	client.pendingMtx.Lock()
-	defer client.pendingMtx.Unlock()
-
-	// 将sendChan中的消息转移到pendingMessages
+	// 先收集所有未发送的消息，不持有锁的时候读取 channel
+	var unsentMessages [][]byte
 	for {
 		select {
-		case msg := <-client.sendChan:
+		case msg, ok := <-client.sendChan:
+			if !ok {
+				// channel 已关闭，退出读取循环
+				goto saveMessages
+			}
 			if len(msg) > 0 {
-				// 避免重复添加
-				found := false
-				for _, pending := range client.pendingMessages {
-					if string(pending) == string(msg) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					client.pendingMessages = append(client.pendingMessages, msg)
-				}
+				unsentMessages = append(unsentMessages, msg)
 			}
 		default:
-			// sendChan已空，退出循环
-			return
+			// sendChan 暂时为空，退出读取循环
+			goto saveMessages
+		}
+	}
+
+saveMessages:
+	// 现在持有锁，保存收集到的消息
+	if len(unsentMessages) > 0 {
+		client.pendingMtx.Lock()
+		defer client.pendingMtx.Unlock()
+
+		for _, msg := range unsentMessages {
+			// 避免重复添加
+			found := false
+			for _, pending := range client.pendingMessages {
+				if string(pending) == string(msg) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				client.pendingMessages = append(client.pendingMessages, msg)
+			}
 		}
 	}
 }

@@ -82,7 +82,7 @@ func RefreshServerInfo() {
 	}
 	err = json.Unmarshal([]byte(plainText), &domains)
 	if err != nil {
-		if Logger != nil {
+		if Logger != nil {	
 			Logger.Warn("解析配置失败", zap.Error(err))
 		}
 		return

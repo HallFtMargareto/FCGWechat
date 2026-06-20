@@ -3,6 +3,7 @@ package fcgame
 import (
 	"bytes"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -10,7 +11,6 @@ import (
 	"github.com/sjzar/chatlog/pkg/util/zstd"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // ProcessContactData 处理联系人数据
@@ -156,9 +156,18 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 
 	// 处理每个消息表
 	for _, table := range tables {
-		dp.processMessageTableWithGORMCH(db, contactDB, messageDB, table, dbFile, account)
-		count := dp.processMessageTableWithGORM(db, contactDB, messageDB, table, dbFile, account)
-		totalCount += count
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					dp.logger.Error("处理消息发生panic", zap.String("table", table), zap.Any("panic", r), zap.String("stack", string(debug.Stack())))
+				}
+			}()
+			// 处理Like消息
+			dp.processMessageTableWithGORMCH(db, contactDB, messageDB, table, dbFile, account)
+			// 处理普通消息
+			count := dp.processMessageTableWithGORM(db, contactDB, messageDB, table, dbFile, account)
+			totalCount += count
+		}()
 	}
 }
 
@@ -307,22 +316,22 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 				SendRetryCount:    0,
 			}
 
-			insertResult := messageDB.Clauses(clause.OnConflict{
-				Columns: []clause.Column{
-					{Name: "hash"},
-					{Name: "server_id"},
-					{Name: "sort_seq"},
-				},
-				DoNothing: true,
-			}).Create(&msgModel)
+			// 先查询是否已存在相同的记录
+			var existingMsg FcgMessageModel
+			messageDB.Where("local_id = ? AND sort_seq = ?  AND server_id = ?",
+				msgModel.LocalId, msgModel.SortSeq, msgModel.ServerId).First(&existingMsg)
+
+			// 存在则跳过所有处理
+			if existingMsg.ID > 0 {
+				continue
+			}
+
+			// 不存在，则插入
+			insertResult := messageDB.Create(&msgModel)
 			if insertResult.Error != nil {
 				dp.logger.Error("保存消息到本地失败", zap.Error(insertResult.Error))
 				sendErr = insertResult.Error
 				break
-			}
-			if insertResult.RowsAffected == 0 {
-				currentSortSeq = int64(msgResult.SortSeq)
-				continue
 			}
 
 			// 发送消息
@@ -355,10 +364,10 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 
 	if totalCount > 0 {
 		fmt.Println("update message: ", totalCount)
-		dp.logger.Debug("process message batch success",
-			zap.String("table", tableName),
-			zap.Int("totalCount", totalCount),
-		)
+		// dp.logger.Debug("process message batch success",
+		// 	zap.String("table", tableName),
+		// 	zap.Int("totalCount", totalCount),
+		// )
 	}
 
 	return totalCount
@@ -488,22 +497,22 @@ func (dp *DataProcessor) processMessageTableWithGORMCH(db *gorm.DB, contactDB *g
 				SendRetryCount:    0,
 			}
 
-			insertResult := messageDB.Clauses(clause.OnConflict{
-				Columns: []clause.Column{
-					{Name: "hash"},
-					{Name: "server_id"},
-					{Name: "sort_seq"},
-				},
-				DoNothing: true,
-			}).Create(&msgModel)
+			// 先查询是否已存在相同的记录
+			var existingMsg FcgMessageLike
+			messageDB.Where("local_id = ? AND sort_seq = ?  AND server_id = ?",
+				msgModel.LocalId, msgModel.SortSeq, msgModel.ServerId).First(&existingMsg)
+
+			// 存在则跳过所有处理
+			if existingMsg.ID > 0 {
+				continue
+			}
+
+			// 不存在，则插入
+			insertResult := messageDB.Create(&msgModel)
 			if insertResult.Error != nil {
 				dp.logger.Error("保存消息到本地失败", zap.Error(insertResult.Error))
 				sendErr = insertResult.Error
 				break
-			}
-			if insertResult.RowsAffected == 0 {
-				currentSortSeq = int64(msgResult.SortSeq)
-				continue
 			}
 
 			// 发送消息
@@ -531,10 +540,10 @@ func (dp *DataProcessor) processMessageTableWithGORMCH(db *gorm.DB, contactDB *g
 
 	if totalCount > 0 {
 		fmt.Println("update message: ", totalCount)
-		dp.logger.Debug("process message batch success",
-			zap.String("table", tableName),
-			zap.Int("totalCount", totalCount),
-		)
+		// dp.logger.Debug("process message batch success",
+		// 	zap.String("table", tableName),
+		// 	zap.Int("totalCount", totalCount),
+		// )
 	}
 
 	return totalCount

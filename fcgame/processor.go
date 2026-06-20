@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +21,7 @@ type DataProcessor struct {
 	accounts      []AccountInfo
 	dbState       DatabaseState
 	wsClient      *WebSocketClient
-	processLock   sync.Mutex // 防止重复处理的锁
+	processSem    chan struct{} // 限制并发任务数的信号量
 	rbblot        *rbblot.RBblotCore
 	wechatManager *WechatManager
 	logger        *zap.Logger
@@ -38,6 +39,7 @@ func NewDataProcessor(rb *rbblot.RBblotCore) *DataProcessor {
 			MessageTableMap: make(map[string]int64),
 			FileStates:      make(map[string]FileState),
 		},
+		processSem:    make(chan struct{}, 2), // 最多允许2个并发任务
 		rbblot:        rb,
 		wechatManager: NewWechatManager(),
 		logger:        logger,
@@ -132,25 +134,58 @@ func (dp *DataProcessor) SaveDatabaseState() {
 func (dp *DataProcessor) StartPeriodicProcessing() {
 	dp.logger.Info("定时任务开启，", zap.Int("account_count", len(dp.accounts)))
 
-	// 定时器，每分钟执行一次
+	// 定时器，每30秒执行一次
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			dp.logger.Debug("任务开始")
-			// 加锁防止重复处理
-			dp.processLock.Lock()
-			for _, account := range dp.accounts {
-				dp.processAccountData(account)
-			}
-			// 保存数据库状态
-			dp.SaveDatabaseState()
-			dp.processLock.Unlock()
-			dp.logger.Debug("任务完成")
+			// 每30秒启动一个新任务，使用信号量控制并发
+			go dp.runTask()
 		}
 	}
+}
+
+// runTask 执行单次任务
+func (dp *DataProcessor) runTask() {
+	defer func() {
+		if err := recover(); err != nil {
+			dp.logger.Error(
+				"runTask panic recovered",
+				zap.String("stack", string(debug.Stack())),
+				zap.Any("error", err),
+			)
+		}
+	}()
+
+	// 尝试获取信号量，非阻塞
+	select {
+	case dp.processSem <- struct{}{}:
+		// 获取成功，继续执行
+	default:
+		// 获取失败，并发数已达上限，跳过本次任务
+		// dp.logger.Warn("并发任务数已达上限，跳过本次任务")
+		return
+	}
+
+	defer func() {
+		// 释放信号量
+		<-dp.processSem
+	}()
+
+	startTime := time.Now()
+	// dp.logger.Debug("任务开始")
+
+	for _, account := range dp.accounts {
+		dp.processAccountData(account)
+	}
+
+	// 保存数据库状态
+	dp.SaveDatabaseState()
+
+	elapsed := time.Since(startTime)
+	dp.logger.Info("sync finish", zap.Duration("elapsed", elapsed))
 }
 
 // Close 关闭数据处理器
@@ -214,6 +249,17 @@ func (dp *DataProcessor) ProcessAllAccounts() {
 
 // processAccountData 处理账户数据（解密、读取、发送）
 func (dp *DataProcessor) processAccountData(account AccountInfo) {
+	defer func() {
+		if err := recover(); err != nil {
+			dp.logger.Error(
+				"processAccountData panic recovered",
+				zap.String("account", account.Name),
+				zap.String("stack", string(debug.Stack())),
+				zap.Any("error", err),
+			)
+		}
+	}()
+
 	dp.logger.Info("start sync account.", zap.String("account", account.Name))
 
 	// 创建解密器
@@ -240,8 +286,7 @@ func (dp *DataProcessor) processAccountData(account AccountInfo) {
 			dp.ProcessMessageDatabase(decryptor, file, account)
 		}
 	}
-
-	dp.logger.Info("sync finish", zap.String("account", account.Name))
+	// dp.logger.Info("sync finish", zap.String("account", account.Name))
 }
 
 // ProcessContactDatabase 处理联系人数据库
@@ -286,7 +331,7 @@ func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbF
 	// 	return
 	// }
 
-	dp.logger.Debug("process message", zap.String("file", filepath.Base(dbFile)))
+	// dp.logger.Debug("process message", zap.String("file", filepath.Base(dbFile)))
 
 	// 解密到临时文件
 	tempDBFile, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key, false)
@@ -298,8 +343,6 @@ func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbF
 	defer func() {
 		if err := os.Remove(tempDBFile); err != nil {
 			dp.logger.Info("remove temp data error", zap.String("file", tempDBFile), zap.Error(err))
-		} else {
-			dp.logger.Debug("temp data remove", zap.String("file", tempDBFile))
 		}
 	}()
 

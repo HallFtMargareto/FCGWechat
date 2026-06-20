@@ -4,9 +4,14 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"fmt"
 	"hash"
 	"io"
 	"os"
+	"runtime"
+	"runtime/debug"
+	"sync"
+	"sync/atomic"
 
 	"github.com/sjzar/chatlog/internal/errors"
 	"github.com/sjzar/chatlog/internal/wechat/decrypt/common"
@@ -95,12 +100,11 @@ func (d *V3Decryptor) Decrypt(ctx context.Context, dbfile string, hexKey string,
 	// 计算密钥
 	encKey, macKey := d.deriveKeys(key, dbInfo.Salt)
 
-	// 打开数据库文件
-	dbFile, err := os.Open(dbfile)
+	// 读取整个文件到内存（为了并行处理）
+	fileData, err := os.ReadFile(dbfile)
 	if err != nil {
-		return errors.OpenFileFailed(dbfile, err)
+		return errors.ReadFileFailed(dbfile, err)
 	}
-	defer dbFile.Close()
 
 	// 写入SQLite头
 	_, err = output.Write([]byte(common.SQLiteHeader))
@@ -108,56 +112,145 @@ func (d *V3Decryptor) Decrypt(ctx context.Context, dbfile string, hexKey string,
 		return errors.WriteOutputFailed(err)
 	}
 
-	// 处理每一页
-	pageBuf := make([]byte, d.pageSize)
+	// 并行解密
+	numWorkers := runtime.NumCPU()
+	results := make([]struct {
+		pageNum int64
+		data    []byte
+		err     error
+	}, dbInfo.TotalPages)
 
-	for curPage := int64(0); curPage < dbInfo.TotalPages; curPage++ {
-		// 检查是否取消
-		select {
-		case <-ctx.Done():
-			return errors.ErrDecryptOperationCanceled
-		default:
-			// 继续处理
-		}
+	var wg sync.WaitGroup
+	pageChan := make(chan int64, numWorkers)
+	var hasError atomic.Bool
+	var firstErr atomic.Value // 存储第一个错误
 
-		// 读取一页
-		n, err := io.ReadFull(dbFile, pageBuf)
-		if err != nil {
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				// 处理最后一部分页面
-				if n > 0 {
-					break
+	// 启动 worker 协程
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					// 捕获 panic 并记录
+					fmt.Fprintf(os.Stderr, "Decrypt worker %d panic: %v\nStack trace:\n%s\n", workerID, r, debug.Stack())
+					firstErr.CompareAndSwap(nil, fmt.Errorf("decrypt worker panic: %v", r))
+					hasError.Store(true)
 				}
-			}
-			return errors.ReadFileFailed(dbfile, err)
-		}
+			}()
 
-		// 检查页面是否全为零
-		allZeros := true
-		for _, b := range pageBuf {
-			if b != 0 {
-				allZeros = false
+			for pageNum := range pageChan {
+				// 如果已有错误，快速返回
+				if hasError.Load() {
+					return
+				}
+
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				start := pageNum * int64(d.pageSize)
+				end := start + int64(d.pageSize)
+				if end > int64(len(fileData)) {
+					end = int64(len(fileData))
+				}
+
+				pageBuf := make([]byte, d.pageSize)
+				// 安全地复制数据，避免越界
+				copyLength := copy(pageBuf, fileData[start:end])
+				if copyLength < int(end-start) && copyLength < d.pageSize {
+					// 如果复制的长度不够，填充剩余部分为 0
+					for j := copyLength; j < d.pageSize; j++ {
+						pageBuf[j] = 0
+					}
+				}
+
+				// 检查页面是否全为零
+				allZeros := true
+				for _, b := range pageBuf {
+					if b != 0 {
+						allZeros = false
+						break
+					}
+				}
+
+				if allZeros {
+					results[pageNum] = struct {
+						pageNum int64
+						data    []byte
+						err     error
+					}{pageNum, pageBuf, nil}
+					continue
+				}
+
+				// 解密页面
+				decryptedData, err := common.DecryptPage(pageBuf, encKey, macKey, pageNum, d.hashFunc, d.hmacSize, d.reserve, d.pageSize)
+				if err != nil {
+					firstErr.CompareAndSwap(nil, err)
+					hasError.Store(true)
+					results[pageNum] = struct {
+						pageNum int64
+						data    []byte
+						err     error
+					}{pageNum, nil, err}
+					return
+				}
+
+				results[pageNum] = struct {
+					pageNum int64
+					data    []byte
+					err     error
+				}{pageNum, decryptedData, nil}
+			}
+		}(i)
+	}
+
+	// 发送任务
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "Task sender panic: %v\nStack trace:\n%s\n", r, debug.Stack())
+				firstErr.CompareAndSwap(nil, fmt.Errorf("task sender panic: %v", r))
+				hasError.Store(true)
+			}
+		}()
+
+		for curPage := int64(0); curPage < dbInfo.TotalPages; curPage++ {
+			if hasError.Load() {
 				break
 			}
+			pageChan <- curPage
 		}
+		close(pageChan)
+	}()
 
-		if allZeros {
-			// 写入零页面
-			_, err = output.Write(pageBuf)
-			if err != nil {
-				return errors.WriteOutputFailed(err)
-			}
-			continue
+	// 等待完成
+	wg.Wait()
+
+	// 检查是否有错误
+	if errVal := firstErr.Load(); errVal != nil {
+		return errVal.(error)
+	}
+
+	// 检查上下文是否被取消
+	select {
+	case <-ctx.Done():
+		return errors.ErrDecryptOperationCanceled
+	default:
+	}
+
+	// 按顺序写入结果
+	for curPage := int64(0); curPage < dbInfo.TotalPages; curPage++ {
+		result := results[curPage]
+		if result.err != nil {
+			return result.err
 		}
-
-		// 解密页面
-		decryptedData, err := common.DecryptPage(pageBuf, encKey, macKey, curPage, d.hashFunc, d.hmacSize, d.reserve, d.pageSize)
-		if err != nil {
-			return err
+		if result.data == nil {
+			return fmt.Errorf("page %d decryption result is nil", curPage)
 		}
-
-		// 写入解密后的页面
-		_, err = output.Write(decryptedData)
+		_, err = output.Write(result.data)
 		if err != nil {
 			return errors.WriteOutputFailed(err)
 		}

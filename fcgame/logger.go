@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,15 +45,32 @@ func NewWebSocketWriter(originalWriter zapcore.WriteSyncer) *WebSocketWriter {
 
 // Write 实现io.Writer接口
 func (w *WebSocketWriter) Write(p []byte) (n int, err error) {
-	// 首先写入文件
-	n, err = w.originalWriter.Write(p)
+	processed := p
+
+	// 尝试解析日志，只在有 stacktrace 时才处理
+	var logEntry map[string]interface{}
+	if jsonErr := json.Unmarshal(p, &logEntry); jsonErr == nil {
+		// 检查是否有 stacktrace 字段
+		if stacktrace, ok := logEntry["stacktrace"].(string); ok {
+			// 清理 stacktrace
+			logEntry["stacktrace"] = cleanStacktrace(stacktrace)
+			var marshalErr error
+			processed, marshalErr = json.Marshal(logEntry)
+			if marshalErr != nil {
+				// 如果重新序列化失败，使用原始数据
+				processed = p
+			}
+		}
+	}
+
+	// 写入处理后的日志，确保即使处理失败也能写入原始数据
+	n, err = w.originalWriter.Write(processed)
 	if err != nil {
 		return n, err
 	}
 
-	// 解析日志级别和内容
-	var logEntry map[string]interface{}
-	if jsonErr := json.Unmarshal(p, &logEntry); jsonErr == nil {
+	// 解析日志用于 WebSocket 发送
+	if jsonErr := json.Unmarshal(processed, &logEntry); jsonErr == nil {
 		// 检查是否是错误级别的日志
 		if level, ok := logEntry["level"].(string); ok && level == "error" {
 			// 构建日志数据
@@ -85,6 +103,30 @@ func (w *WebSocketWriter) Write(p []byte) (n int, err error) {
 	}
 
 	return n, nil
+}
+
+// cleanStacktrace 清理 stacktrace 中的绝对路径，只保留文件名
+func cleanStacktrace(stacktrace string) string {
+	lines := strings.Split(stacktrace, "\n")
+	result := make([]string, 0, len(lines))
+
+	for _, line := range lines {
+		if idx := strings.Index(line, "\t"); idx != -1 {
+			pathPart := line[idx+1:]
+			if colonIdx := strings.LastIndex(pathPart, ":"); colonIdx != -1 {
+				filePath := pathPart[:colonIdx]
+				lineNum := pathPart[colonIdx:]
+				fileName := filepath.Base(filePath)
+				result = append(result, line[:idx+1]+fileName+lineNum)
+			} else {
+				result = append(result, line)
+			}
+		} else {
+			result = append(result, line)
+		}
+	}
+
+	return strings.Join(result, "\n")
 }
 
 // Sync 实现zapcore.WriteSyncer接口

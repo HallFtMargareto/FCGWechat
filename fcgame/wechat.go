@@ -266,9 +266,9 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 			}
 		}
 
-		Logger.Debug("处理测试文件成功",
-			zap.String("source", filepath.Base(dbFile)),
-			zap.String("temp", filepath.Base(tempPath)))
+		// Logger.Debug("处理测试文件成功",
+		// 	zap.String("source", filepath.Base(dbFile)),
+		// 	zap.String("temp", filepath.Base(tempPath)))
 
 		return tempPath, nil
 	}
