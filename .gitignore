@@ -1,0 +1,50 @@
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.log
+*.rar
+*.xlsx
+# Test binary, built with `go test -c`
+*.test
+*.db
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+
+# syncthing files
+.stfolder
+
+chatlog.exe# Added by goreleaser init:
+dist/
+rtpsystem.dat
+storage/
+fcgame_lxr.dat
+fcgame_lxr.dat-shm
+fcgame_lxr.dat-wal
+fcgame.dat
+cmd/version4/message_0.db
+cmd/version4/list/*
+bin/*
+config.json
+bin/config.json
+wxid_9ggxxig2xemo22_e939.json
+config-dev.json
+bin/config.json
+fcgame_um.dat
+go.sum

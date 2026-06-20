@@ -1,0 +1,48 @@
+{
+  "websocket": {
+    "server": "ftcmsy365.com",
+    "port": "",
+    "path": "/websocket",
+    "scheme": "wss"
+  },
+  "auth": {
+    "require_auth": true,
+    "token": "",
+    "tenant_id": 0
+  },
+  "client": {
+    "version": "1.0.0",
+    "heartbeat_interval": 30,
+    "reconnect_interval": 3,
+    "max_reconnect_count": 100,
+    "connect_timeout": 100
+  },
+  "message": {
+    "max_message_size": 50120,
+    "send_timeout": 100,
+    "read_timeout": 120,
+    "max_queue": 5000
+  },
+  "basic": {
+    "min_create_time": 0,
+    "max_message_db_count": 20,
+    "time_layout": "2006-01-02 15:04:05",
+    "contact_db": "fcgame_lxr.dat"
+  },
+  "accounts": [
+    {
+      "name": "wxid_j1xusivt756j12_708c",
+      "sort_name": "",
+      "platform": "windows",
+      "version": 4,
+      "full_version": "4.1.2.0",
+      "data_dir": "C:\\Users\\mouren\\Documents\\xwechat_files\\wxid_j1xusivt756j12_708c",
+      "key": "9375adfbf2774ec2a6cae1ae50b5be2ca0023b4f80ce4cb5bbbc37a949a9823f",
+      "img_key": "39653935333562653962303138623331",
+      "pid": 1000,
+      "exe_path": "C:\\Program Files\\Tencent\\Weixin\\Weixin.exe",
+      "status": "online",
+      "saved_at": 1761637918
+    }
+  ]
+}
