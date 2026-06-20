@@ -49,26 +49,29 @@ func (dp *DataProcessor) InitializeWebSocket() error {
 	config := GetDefaultConfig()
 	dp.wsClient = NewWebSocketClient(config, dp.logger)
 
-	// if err := dp.wsClient.ConnectWithRetry(); err != nil {
-	// 	dp.logger.Warn("WebSocket连接失败", zap.Error(err))
-	// 	return err
-	// }
-
 	// 设置日志系统的WebSocket客户端
 	SetWebSocketClient(dp.wsClient)
 
 	SafeRun(dp.wsClient.Run)
 
-	// 启动消息监听和心跳
-	// go dp.wsClient.ListenMessages()
-	//SafeRun(dp.wsClient.ListenMessages)
+	// 等待连接成功
+	timeout := time.After(30 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 
-	//SafeRun(dp.wsClient.StartWriter)
+	fmt.Println("等待WebSocket连接建立...")
 
-	// 只需要一方发 Ping，通常是服务端。客户端不用维持心跳，不要在双方都发心跳，否则会互相干扰
-	// go dp.wsClient.StartHeartbeat()
-
-	return nil
+	for {
+		select {
+		case <-ticker.C:
+			if dp.wsClient.IsConnected() {
+				fmt.Println("✅ WebSocket连接已建立成功")
+				return nil
+			}
+		case <-timeout:
+			return fmt.Errorf("WebSocket连接超时，30秒内未连接成功")
+		}
+	}
 }
 
 // LoadAccounts 加载账户信息
@@ -227,7 +230,7 @@ func (dp *DataProcessor) processAccountData(account AccountInfo) {
 	if len(contactFiles) > 0 {
 		err = dp.ProcessContactDatabase(decryptor, contactFiles[0], account)
 		if err != nil {
-			return
+			dp.logger.Error("读取CTT-DB失败", zap.String("account", account.Name), zap.Error(err))
 		}
 	}
 
