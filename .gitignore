@@ -31,6 +31,7 @@ go.work.sum
 .stfolder
 
 chatlog.exe# Added by goreleaser init:
+cust/
 dist/
 rtpsystem.dat
 storage/

@@ -13,7 +13,7 @@ import (
 */
 
 // var key = "29a447e0cedb4771b1b5076bb80f297d0a198abfabe5497e89333c1bd51d4dfa"
-var key = "2abdce50839242268b5a1229b3aecde4d6edb782cb394803857521353461ce79"
+var key = "f751a943e9d94859aa0d53e03119f6a6387039c830fb48dea62818dd3ea07491"
 
 func main() {
 	// 创建解密器
@@ -27,7 +27,8 @@ func main() {
 	defer manager.Close()
 
 	wechatManager := fcgame.NewWechatManager()
-	tempDBFile, err := wechatManager.DecryptToTempFile(decryptor, "D:\\CryptDrive\\chatlog-main\\cmd\\version4\\message_0-5.db", key, false)
+	// tempDBFile, err := wechatManager.DecryptToTempFile(decryptor, "D:\\CryptDrive\\chatlog-main\\cmd\\version4\\message_0-5.db", key, false)
+	tempDBFile, err := wechatManager.DecryptToTempFile(decryptor, "S:\\Project\\chatlog-main\\cust\\xbs\\message\\message_0.db", key, false)
 
 	// tempDBFile, err := wechatManager.DecryptToTempFile(decryptor, "D:\\CryptDrive\\chatlog-main\\cmd\\version4\\list\\wxid_0f32w7u1lmox22_3011\\db_storage\\contact\\contact.db", key, false)
 
