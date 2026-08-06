@@ -121,7 +121,9 @@ func (dp *DataProcessor) LoadDatabaseState() {
 
 // SaveDatabaseState 保存数据库状态到缓存
 func (dp *DataProcessor) SaveDatabaseState() {
+	dp.mutex.Lock()
 	data, err := json.Marshal(dp.dbState)
+	dp.mutex.Unlock()
 	if err != nil {
 		dp.logger.Error("序列化数据库状态失败", zap.Error(err))
 		return

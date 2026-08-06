@@ -195,8 +195,11 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 
 	// 尝试从持久化状态中获取最后处理的 sort_seq
 	var currentSortSeq int64
-	exists := false
-	if currentSortSeq, exists = dp.dbState.MessageTableMap[tableName]; !exists {
+	var exists bool
+	dp.mutex.Lock()
+	currentSortSeq, exists = dp.dbState.MessageTableMap[tableName]
+	dp.mutex.Unlock()
+	if !exists {
 		currentSortSeq = todayStart
 	} else {
 		tenMinutesMillis := int64(2 * 60 * 1000) // 2分钟前的时间
@@ -363,10 +366,12 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 		}
 	}
 
-	// 跑完一次后，将更新后的 currentSortSeq 保存回持久化状态。
+// 跑完一次后，将更新后的 currentSortSeq 保存回持久化状态。
 	// 下一次定时任务执行时，由于会取 Min(tenMinsAgoMs, currentSortSeq)，
-	// 从而实现了“每次执行都用10分钟的时间窗口滑动作为查询条件，且不会漏掉停机期间的消息”
+	// 从而实现了"每次执行都用10分钟的时间窗口滑动作为查询条件，且不会漏掉停机期间的消息"
+	dp.mutex.Lock()
 	dp.dbState.MessageTableMap[tableName] = currentSortSeq
+	dp.mutex.Unlock()
 
 	if totalCount > 0 {
 		fmt.Println("update message: ", totalCount)
