@@ -69,6 +69,7 @@ func (m *Manager) Close() {
 	if m.processor != nil {
 		m.processor.Close()
 	}
+	CloseMessageGormDB()
 	if m.rbblot != nil {
 		m.rbblot.Close()
 	}

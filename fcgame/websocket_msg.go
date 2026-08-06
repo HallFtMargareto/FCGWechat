@@ -148,12 +148,6 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 		dp.logger.Error("初始化消息数据库失败", zap.Error(err))
 		return false
 	}
-	messageDBConn, err := messageDB.DB()
-	if err != nil {
-		dp.logger.Error("获取消息数据库连接失败", zap.Error(err))
-		return false
-	}
-	defer messageDBConn.Close()
 
 	// 获取所有消息表
 	tables := dp.getMessageTablesWithGORM(db)
