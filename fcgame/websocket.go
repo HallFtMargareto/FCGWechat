@@ -463,9 +463,6 @@ func (client *WebSocketClient) ListenMessages() {
 						go func(h string, id uint64) {
 							messageDB, err := GetMessageGormDB()
 							if err == nil {
-								if sqlDB, dbErr := messageDB.DB(); dbErr == nil {
-									defer sqlDB.Close()
-								}
 								if localIdTypeID == 10000 {
 									// 更新发送状态为1
 									messageDB.Model(&FcgMessageLike{}).
@@ -565,11 +562,6 @@ func (client *WebSocketClient) ResendFailedMessages() {
 				client.logger.Error("重发协程获取数据库连接失败", zap.Error(err))
 				continue
 			}
-			sqlDB, dbErr := cdb.DB()
-			if dbErr != nil {
-				client.logger.Error("获取消息数据库连接失败", zap.Error(dbErr))
-				continue
-			}
 			oneMinuteAgo := time.Now().Add(-1 * time.Minute)
 
 			// ======================================正常消息重复================================================
@@ -586,7 +578,6 @@ func (client *WebSocketClient) ResendFailedMessages() {
 
 				for _, msgModel := range failedMessages {
 					if !client.IsConnected() {
-						sqlDB.Close()
 						return
 					}
 
@@ -650,7 +641,6 @@ func (client *WebSocketClient) ResendFailedMessages() {
 
 				for _, msgModel := range likeMessages {
 					if !client.IsConnected() {
-						sqlDB.Close()
 						return
 					}
 
@@ -701,8 +691,6 @@ func (client *WebSocketClient) ResendFailedMessages() {
 					}
 				}
 			}
-
-			sqlDB.Close()
 		case <-client.messageStop: // 复用 messageStop 或新建一个 stop channel
 			return
 		}

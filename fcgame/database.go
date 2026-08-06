@@ -90,75 +90,72 @@ func GetGormDB(dbPath string) (*gorm.DB, error) {
 
 var (
 	messageDBInstance *gorm.DB
-	messageDBOnce     sync.Once
-	messageDBErr      error
+	messageDBMu       sync.Mutex
 )
 
 func GetMessageGormDB() (*gorm.DB, error) {
-	messageDBOnce.Do(func() {
-		currentDir, err := os.Getwd()
-		if err != nil {
-			messageDBErr = fmt.Errorf("获取当前目录失败: %w", err)
-			return
+	messageDBMu.Lock()
+	defer messageDBMu.Unlock()
+
+	if messageDBInstance != nil {
+		sqlDB, err := messageDBInstance.DB()
+		if err == nil && sqlDB.Ping() == nil {
+			return messageDBInstance, nil
+		}
+		messageDBInstance = nil
+	}
+
+	currentDir, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("获取当前目录失败: %w", err)
+	}
+
+	dbPath := filepath.Join(currentDir, MessageDBFileName)
+	if _, err := os.Stat(dbPath); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("检查消息数据库文件失败: %w", err)
 		}
 
-		dbPath := filepath.Join(currentDir, MessageDBFileName)
-		if _, err := os.Stat(dbPath); err != nil {
-			if !os.IsNotExist(err) {
-				messageDBErr = fmt.Errorf("检查消息数据库文件失败: %w", err)
-				return
-			}
-
-			f, createErr := os.Create(dbPath)
-			if createErr != nil {
-				messageDBErr = fmt.Errorf("创建消息数据库文件失败: %w", createErr)
-				return
-			}
-			closeErr := f.Close()
-			if closeErr != nil {
-				messageDBErr = fmt.Errorf("关闭消息数据库文件失败: %w", closeErr)
-				return
-			}
+		f, createErr := os.Create(dbPath)
+		if createErr != nil {
+			return nil, fmt.Errorf("创建消息数据库文件失败: %w", createErr)
 		}
-
-		dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
-		config := &gorm.Config{
-			Logger: logger.Default.LogMode(logger.Silent),
+		closeErr := f.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("关闭消息数据库文件失败: %w", closeErr)
 		}
+	}
 
-		db, err := gorm.Open(sqlite.Open(dsn), config)
-		if err != nil {
-			messageDBErr = fmt.Errorf("打开消息数据库失败: %w", err)
-			return
-		}
+	dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
+	config := &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	}
 
-		sqlDB, err := db.DB()
-		if err != nil {
-			messageDBErr = fmt.Errorf("获取底层数据库连接失败: %w", err)
-			return
-		}
-		sqlDB.SetMaxOpenConns(1)
+	db, err := gorm.Open(sqlite.Open(dsn), config)
+	if err != nil {
+		return nil, fmt.Errorf("打开消息数据库失败: %w", err)
+	}
 
-		err = db.AutoMigrate(&FcgMessageModel{})
-		if err != nil {
-			messageDBErr = fmt.Errorf("自动创建本地消息表失败: %w", err)
-			return
-		}
-		err = db.AutoMigrate(&FcgMessageLike{})
-		if err != nil {
-			messageDBErr = fmt.Errorf("自动创建本地消息Like表失败: %w", err)
-			return
-		}
+	err = db.AutoMigrate(&FcgMessageModel{})
+	if err != nil {
+		return nil, fmt.Errorf("自动创建本地消息表失败: %w", err)
+	}
+	err = db.AutoMigrate(&FcgMessageLike{})
+	if err != nil {
+		return nil, fmt.Errorf("自动创建本地消息Like表失败: %w", err)
+	}
 
-		messageDBInstance = db
-	})
-	return messageDBInstance, messageDBErr
+	messageDBInstance = db
+	return messageDBInstance, nil
 }
 
 func CloseMessageGormDB() {
+	messageDBMu.Lock()
+	defer messageDBMu.Unlock()
 	if messageDBInstance != nil {
 		if sqlDB, err := messageDBInstance.DB(); err == nil {
 			sqlDB.Close()
 		}
+		messageDBInstance = nil
 	}
 }
