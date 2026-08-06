@@ -3,6 +3,7 @@ package fcgame
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -181,6 +182,36 @@ func (wm *WechatManager) GetTargetDatabaseFiles(account AccountInfo) (contactFil
 	return
 }
 
+// copyToTempFile 将源文件复制到临时文件，避免源文件被并发写入导致数据不一致
+func copyToTempFile(srcPath, pattern string) (string, error) {
+	srcFile, err := os.Open(srcPath)
+	if err != nil {
+		return "", fmt.Errorf("打开源文件失败: %v", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.CreateTemp("", pattern+".dat")
+	if err != nil {
+		return "", fmt.Errorf("创建临时文件失败: %v", err)
+	}
+	dstPath := dstFile.Name()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		dstFile.Close()
+		os.Remove(dstPath)
+		return "", fmt.Errorf("复制文件失败: %v", err)
+	}
+
+	if err := dstFile.Sync(); err != nil {
+		dstFile.Close()
+		os.Remove(dstPath)
+		return "", fmt.Errorf("同步文件失败: %v", err)
+	}
+
+	dstFile.Close()
+	return dstPath, nil
+}
+
 // DecryptToTempFile 解密数据库到临时文件
 func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, key string, save bool) (string, error) {
 	if save {
@@ -227,7 +258,13 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 
 		return targetPath, nil
 	} else {
-		// 当save为false时，保持原来的逻辑
+		// 先复制源文件到临时副本，避免微信写入导致数据不一致
+		srcCopy, err := copyToTempFile(dbFile, "fcgame_src_*")
+		if err != nil {
+			return "", fmt.Errorf("复制源文件失败: %v", err)
+		}
+		defer os.Remove(srcCopy)
+
 		// 创建临时文件进行解密
 		tempFile, err := os.CreateTemp("", "fcgame_test_*.dat")
 		if err != nil {
@@ -236,7 +273,7 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 		tempPath := tempFile.Name()
 		tempFile.Close()
 
-		// 解密到临时文件
+		// 解密到临时文件（从副本解密）
 		outputFile, err := os.Create(tempPath)
 		if err != nil {
 			os.Remove(tempPath)
@@ -244,14 +281,14 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 		}
 
 		ctx := context.Background()
-		err = decryptor.Decrypt(ctx, dbFile, key, outputFile)
+		err = decryptor.Decrypt(ctx, srcCopy, key, outputFile)
 		outputFile.Close()
 
 		if err != nil {
 			// 如果已经解密，直接复制文件
 			if strings.Contains(err.Error(), "already decrypted") {
 				Logger.Debug("文件已处理，直接复制", zap.String("file", filepath.Base(dbFile)))
-				data, readErr := os.ReadFile(dbFile)
+				data, readErr := os.ReadFile(srcCopy)
 				if readErr != nil {
 					os.Remove(tempPath)
 					return "", fmt.Errorf("读取文件失败: %v", readErr)
@@ -265,10 +302,6 @@ func (wm *WechatManager) DecryptToTempFile(decryptor decrypt.Decryptor, dbFile, 
 				return "", fmt.Errorf("处理失败: %v", err)
 			}
 		}
-
-		// Logger.Debug("处理测试文件成功",
-		// 	zap.String("source", filepath.Base(dbFile)),
-		// 	zap.String("temp", filepath.Base(tempPath)))
 
 		return tempPath, nil
 	}

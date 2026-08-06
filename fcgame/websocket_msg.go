@@ -104,19 +104,29 @@ func (dp *DataProcessor) ProcessContactData(tempDBFile string, account string) (
 }
 
 // ProcessMessageData 处理消息数据
-func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, dbFile string) {
+func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, dbFile string) bool {
 	// 打开数据库连接
 	db, err := GetGormDB(tempDBFile)
 	if err != nil {
 		dp.logger.Error("打开临时数据库失败", zap.Error(err))
-		return
+		return false
+	}
+
+	// 校验数据库完整性
+	if !ValidateSQLiteDB(db) {
+		sqlDB, _ := db.DB()
+		if sqlDB != nil {
+			sqlDB.Close()
+		}
+		dp.logger.Error("临时数据库完整性校验失败", zap.String("file", tempDBFile))
+		return false
 	}
 
 	// 获取原始数据库连接以便关闭
 	sqlDB, err := db.DB()
 	if err != nil {
 		dp.logger.Error("获取原始数据库连接失败", zap.Error(err))
-		return
+		return false
 	}
 	defer sqlDB.Close()
 
@@ -124,24 +134,24 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 	contactDB, err := GetGormDB(CONTACT_DB)
 	if err != nil {
 		dp.logger.Error("打开联系人数据库失败", zap.Error(err))
-		return
+		return false
 	}
 	contactDBConn, err := contactDB.DB()
 	if err != nil {
 		dp.logger.Error("获取联系人数据库连接失败", zap.Error(err))
-		return
+		return false
 	}
 	defer contactDBConn.Close()
 
 	messageDB, err := GetMessageGormDB()
 	if err != nil {
 		dp.logger.Error("初始化消息数据库失败", zap.Error(err))
-		return
+		return false
 	}
 	messageDBConn, err := messageDB.DB()
 	if err != nil {
 		dp.logger.Error("获取消息数据库连接失败", zap.Error(err))
-		return
+		return false
 	}
 	defer messageDBConn.Close()
 
@@ -149,7 +159,7 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 	tables := dp.getMessageTablesWithGORM(db)
 	if len(tables) == 0 {
 		dp.logger.Warn("未找到消息表")
-		return
+		return false
 	}
 
 	totalCount := 0
@@ -169,6 +179,8 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 			totalCount += count
 		}()
 	}
+
+	return true
 }
 
 // processMessageTableWithGORM 使用GORM处理单个消息表

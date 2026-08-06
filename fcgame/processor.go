@@ -325,32 +325,39 @@ func (dp *DataProcessor) ProcessContactDatabase(decryptor decrypt.Decryptor, dbF
 
 // ProcessMessageDatabase 处理消息数据库
 func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbFile string, account AccountInfo) {
-	// 检查文件是否需要更新
-	// if !dp.needsUpdate(dbFile) {
-	// 	dp.logger.Debug("消息数据库无更新", zap.String("file", filepath.Base(dbFile)))
-	// 	return
-	// }
+	const maxRetries = 3
+	for i := 0; i < maxRetries; i++ {
+		if i > 0 {
+			dp.logger.Warn("消息数据库完整性校验失败，准备重试",
+				zap.Int("retry", i),
+				zap.String("file", filepath.Base(dbFile)))
+			time.Sleep(1 * time.Second)
+		}
 
-	// dp.logger.Debug("process message", zap.String("file", filepath.Base(dbFile)))
+		// 解密到临时文件
+		tempDBFile, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key, false)
+		if err != nil {
+			dp.logger.Debug("Failed to decrypt message database", zap.Error(err))
+			return
+		}
 
-	// 解密到临时文件
-	tempDBFile, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key, false)
-	if err != nil {
-		dp.logger.Debug("Failed to decrypt message database", zap.Error(err))
-		return
-	}
-	// 确保删除临时文件
-	defer func() {
+		// 读取并发送消息数据
+		success := dp.ProcessMessageData(tempDBFile, account.SortName, dbFile)
+
+		// 清理临时文件
 		if err := os.Remove(tempDBFile); err != nil {
 			dp.logger.Info("remove temp data error", zap.String("file", tempDBFile), zap.Error(err))
 		}
-	}()
 
-	// 读取并发送消息数据
-	dp.ProcessMessageData(tempDBFile, account.SortName, dbFile)
+		if success {
+			// 更新文件状态
+			dp.updateFileState(dbFile)
+			return
+		}
+	}
 
-	// 更新文件状态
-	dp.updateFileState(dbFile)
+	dp.logger.Error("消息数据库处理失败，已达最大重试次数",
+		zap.String("file", filepath.Base(dbFile)))
 }
 
 // needsUpdate 检查文件是否需要更新

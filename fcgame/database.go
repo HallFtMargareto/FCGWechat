@@ -62,6 +62,16 @@ type DatabaseConfig struct {
 	MinCreateTime int64 `json:"min_create_time"` // 最小创建时间戳过滤
 }
 
+// ValidateSQLiteDB 校验SQLite数据库完整性，返回true表示数据库完整可用
+func ValidateSQLiteDB(db *gorm.DB) bool {
+	var result string
+	row := db.Raw("PRAGMA integrity_check").Row()
+	if err := row.Scan(&result); err != nil {
+		return false
+	}
+	return result == "ok"
+}
+
 // GetGormDB 获取GORM数据库连接
 func GetGormDB(dbPath string) (*gorm.DB, error) {
 	// 配置GORM使用静默日志模式，避免输出到控制台
