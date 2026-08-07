@@ -330,7 +330,7 @@ func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbF
 	const maxRetries = 3
 	for i := 0; i < maxRetries; i++ {
 		if i > 0 {
-			dp.logger.Warn("消息数据库完整性校验失败，准备重试",
+			dp.logger.Error("消息数据库处理失败，准备重试",
 				zap.Int("retry", i),
 				zap.String("file", filepath.Base(dbFile)))
 			time.Sleep(1 * time.Second)

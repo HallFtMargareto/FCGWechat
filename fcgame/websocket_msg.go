@@ -152,11 +152,12 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 	// 获取所有消息表
 	tables := dp.getMessageTablesWithGORM(db)
 	if len(tables) == 0 {
-		dp.logger.Warn("未找到消息表")
+		dp.logger.Error("未找到消息表")
 		return false
 	}
 
 	totalCount := 0
+	var queryErr error
 
 	// 处理每个消息表
 	for _, table := range tables {
@@ -167,18 +168,24 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 				}
 			}()
 			// 处理Like消息
-			dp.processMessageTableWithGORMCH(db, contactDB, messageDB, table, dbFile, account)
+			_, err := dp.processMessageTableWithGORMCH(db, contactDB, messageDB, table, dbFile, account)
+			if err != nil {
+				queryErr = err
+			}
 			// 处理普通消息
-			count := dp.processMessageTableWithGORM(db, contactDB, messageDB, table, dbFile, account)
+			count, err := dp.processMessageTableWithGORM(db, contactDB, messageDB, table, dbFile, account)
+			if err != nil {
+				queryErr = err
+			}
 			totalCount += count
 		}()
 	}
 
-	return true
+	return queryErr == nil
 }
 
 // processMessageTableWithGORM 使用GORM处理单个消息表
-func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gorm.DB, messageDB *gorm.DB, tableName, dbFile string, account string) int {
+func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gorm.DB, messageDB *gorm.DB, tableName, dbFile string, account string) (int, error) {
 
 	// 分批处理消息数据，每次最多500条
 	const batchSize = 500
@@ -250,7 +257,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 		err := db.Raw(query, args...).Scan(&messages).Error
 		if err != nil {
 			dp.logger.Error("查询消息表失败", zap.String("table", tableName), zap.Error(err))
-			return totalCount
+			return totalCount, err
 		}
 
 		batchCount := len(messages)
@@ -358,7 +365,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 		}
 
 		if sendErr != nil {
-			return totalCount
+			return totalCount, nil
 		}
 
 		// 如果这批数据不足batchSize，说明已经处理完所有数据
@@ -367,7 +374,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 		}
 	}
 
-// 跑完一次后，将更新后的 currentSortSeq 保存回持久化状态。
+	// 跑完一次后，将更新后的 currentSortSeq 保存回持久化状态。
 	// 下一次定时任务执行时，由于会取 Min(tenMinsAgoMs, currentSortSeq)，
 	// 从而实现了"每次执行都用10分钟的时间窗口滑动作为查询条件，且不会漏掉停机期间的消息"
 	dp.mutex.Lock()
@@ -382,11 +389,11 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 		// )
 	}
 
-	return totalCount
+	return totalCount, nil
 }
 
 // processMessageTableWithGORM 使用GORM处理单个消息表Like
-func (dp *DataProcessor) processMessageTableWithGORMCH(db *gorm.DB, contactDB *gorm.DB, messageDB *gorm.DB, tableName, dbFile string, account string) int {
+func (dp *DataProcessor) processMessageTableWithGORMCH(db *gorm.DB, contactDB *gorm.DB, messageDB *gorm.DB, tableName, dbFile string, account string) (int, error) {
 
 	// 分批处理消息数据，每次最多500条
 	const batchSize = 500
@@ -438,7 +445,7 @@ func (dp *DataProcessor) processMessageTableWithGORMCH(db *gorm.DB, contactDB *g
 		err := db.Raw(query, args...).Scan(&messages).Error
 		if err != nil {
 			dp.logger.Error("查询CH消息表失败", zap.String("table", tableName), zap.Error(err))
-			return totalCount
+			return totalCount, err
 		}
 
 		batchCount := len(messages)
@@ -542,7 +549,7 @@ func (dp *DataProcessor) processMessageTableWithGORMCH(db *gorm.DB, contactDB *g
 		}
 
 		if sendErr != nil {
-			return totalCount
+			return totalCount, nil
 		}
 
 		// 如果这批数据不足batchSize，说明已经处理完所有数据
@@ -559,7 +566,7 @@ func (dp *DataProcessor) processMessageTableWithGORMCH(db *gorm.DB, contactDB *g
 		// )
 	}
 
-	return totalCount
+	return totalCount, nil
 }
 
 // getMessageTablesWithGORM 使用GORM获取所有消息表
