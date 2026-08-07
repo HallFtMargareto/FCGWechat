@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -90,7 +91,7 @@ func (client *WebSocketClient) Run() {
 
 		// 2. 连接成功，启动所有协程，使用 WaitGroup 等待全部退出
 		var wg sync.WaitGroup
-		anyDone := make(chan struct{}, 3)
+		anyDone := make(chan struct{}, 4)
 
 		runGoroutine := func(name string, fn func()) {
 			wg.Add(1)
@@ -109,6 +110,7 @@ func (client *WebSocketClient) Run() {
 		}
 
 		runGoroutine("StartWriter", client.StartWriter)
+		runGoroutine("StartHeartbeat", client.StartHeartbeat)
 		runGoroutine("ListenMessages", client.ListenMessages)
 		runGoroutine("ResendFailedMessages", client.ResendFailedMessages)
 
@@ -335,14 +337,15 @@ func (client *WebSocketClient) write(msgType int, data []byte) error {
 	client.writeMtx.Lock()
 	defer client.writeMtx.Unlock()
 
-	if !client.isConnected.Load() {
+	conn := client.conn
+	if conn == nil || !client.isConnected.Load() {
 		return fmt.Errorf("client not connection")
 	}
 
 	// 设置写超时
-	client.conn.SetWriteDeadline(time.Now().Add(SendTimeout))
-	err := client.conn.WriteMessage(msgType, data)
-	client.conn.SetWriteDeadline(time.Time{}) // 清除超时
+	conn.SetWriteDeadline(time.Now().Add(SendTimeout))
+	err := conn.WriteMessage(msgType, data)
+	conn.SetWriteDeadline(time.Time{}) // 清除超时
 
 	if err != nil {
 		client.isConnected.Store(false)
@@ -401,11 +404,13 @@ func (client *WebSocketClient) SendClientLog(log any) error {
 	return client.SendMessage("clientlog", log)
 }
 
-// 发送心跳（Ping）
+// SendHeartbeat 发送心跳（Ping）
 func (client *WebSocketClient) SendHeartbeat() error {
 	// 心跳消息不需要缓存，因为它是周期性的
 	if client.IsConnected() {
-		client.safeSendSendChan(websocket.FormatCloseMessage(websocket.PingMessage, ""))
+		if err := client.write(websocket.PingMessage, nil); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -425,6 +430,10 @@ func (client *WebSocketClient) SendTextMessage(text []byte) error {
 // 监听服务器消息
 func (client *WebSocketClient) ListenMessages() {
 
+	// 设置初始读取超时，防止死连接导致 ReadMessage 永久阻塞
+	// PongHandler 会在收到 Pong 后刷新此超时
+	client.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
+
 	// 设置 PongHandler
 	client.conn.SetPongHandler(func(appData string) error {
 		fmt.Println("接收服务器PING包:", time.Now().Unix())
@@ -437,7 +446,7 @@ func (client *WebSocketClient) ListenMessages() {
 			return
 		}
 
-		// 设置读取超时
+		// 读取消息
 		_, message, err := client.conn.ReadMessage()
 		if err != nil {
 			client.logger.Error("Read Message Error:", zap.Error(err))
@@ -451,17 +460,10 @@ func (client *WebSocketClient) ListenMessages() {
 			}
 			client.isConnected.Store(false)
 			return
-			// 如果需要自动重连
-			// if client.config.Reconnect && !client.isShutdown.Load() {
-			// 	err = client.ConnectWithRetry()
-			// 	if err != nil {
-			// 		fmt.Println("自动重连失败: ", err)
-			// 		return
-			// 	}
-			// } else {
-			// 	return
-			// }
 		}
+
+		// 收到数据后刷新读取超时，防止活跃连接因超时被断开
+		client.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 
 		// 解析响应消息
 		var response Response
@@ -482,33 +484,41 @@ func (client *WebSocketClient) ListenMessages() {
 						localId := uint64(localIdFloat)
 						localIdTypeID := uint64(localIdType)
 						// 异步更新数据库状态
-						go func(h string, id uint64) {
-							messageDB, err := GetMessageGormDB()
-							if err == nil {
-								if localIdTypeID == 10000 {
-									// 更新发送状态为1
-									messageDB.Model(&FcgMessageLike{}).
-										Where("hash = ? AND local_id = ?", h, id).
-										Update("send_status", 1)
-								} else {
-									// 更新发送状态为1
-									messageDB.Model(&FcgMessageModel{}).
-										Where("hash = ? AND local_id = ?", h, id).
-										Update("send_status", 1)
+						go func(h string, id uint64, lidType uint64) {
+							defer func() {
+								if r := recover(); r != nil {
+									client.logger.Error("更新消息发送状态panic",
+										zap.Any("error", r),
+										zap.String("stack", string(debug.Stack())))
 								}
+							}()
 
+							messageDB, err := GetMessageGormDB()
+							if err != nil {
+								client.logger.Error("更新消息发送状态获取数据库失败",
+									zap.String("hash", h), zap.Uint64("local_id", id), zap.Error(err))
+								return
 							}
-						}(hash, localId)
+
+							var updateErr error
+							if lidType == 10000 {
+								updateErr = messageDB.Model(&FcgMessageLike{}).
+									Where("hash = ? AND local_id = ?", h, id).
+									Update("send_status", 1).Error
+							} else {
+								updateErr = messageDB.Model(&FcgMessageModel{}).
+									Where("hash = ? AND local_id = ?", h, id).
+									Update("send_status", 1).Error
+							}
+							if updateErr != nil {
+								client.logger.Error("更新消息发送状态失败",
+									zap.String("hash", h), zap.Uint64("local_id", id), zap.Error(updateErr))
+							}
+						}(hash, localId, localIdTypeID)
 					}
 				}
 			}
-
-			// if response.Data != nil {
-			// 	dataBytes, _ := json.MarshalIndent(response.Data, "", "  ")
-			// 	fmt.Println("接收数据: ", string(dataBytes))
-			// }
 		}
-		// fmt.Println(string(message))
 	}
 }
 

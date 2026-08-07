@@ -157,7 +157,7 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 	}
 
 	totalCount := 0
-	var queryErr error
+	var sendErrOccurred bool
 
 	// 处理每个消息表
 	for _, table := range tables {
@@ -170,18 +170,22 @@ func (dp *DataProcessor) ProcessMessageData(tempDBFile string, account string, d
 			// 处理Like消息
 			_, err := dp.processMessageTableWithGORMCH(db, contactDB, messageDB, table, dbFile, account)
 			if err != nil {
-				queryErr = err
+				dp.logger.Error("处理Like消息表失败", zap.String("table", table), zap.Error(err))
+				sendErrOccurred = true
 			}
 			// 处理普通消息
 			count, err := dp.processMessageTableWithGORM(db, contactDB, messageDB, table, dbFile, account)
 			if err != nil {
-				queryErr = err
+				dp.logger.Error("处理消息表失败", zap.String("table", table), zap.Error(err))
+				sendErrOccurred = true
 			}
 			totalCount += count
 		}()
 	}
 
-	return queryErr == nil
+	// 如果有发送错误发生，返回false让上层重试
+	// 注意：即使返回false，已插入本地数据库的消息不会丢失，ResendFailedMessages会负责重发
+	return !sendErrOccurred
 }
 
 // processMessageTableWithGORM 使用GORM处理单个消息表
@@ -365,7 +369,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 		}
 
 		if sendErr != nil {
-			return totalCount, nil
+			return totalCount, sendErr
 		}
 
 		// 如果这批数据不足batchSize，说明已经处理完所有数据
@@ -549,7 +553,7 @@ func (dp *DataProcessor) processMessageTableWithGORMCH(db *gorm.DB, contactDB *g
 		}
 
 		if sendErr != nil {
-			return totalCount, nil
+			return totalCount, sendErr
 		}
 
 		// 如果这批数据不足batchSize，说明已经处理完所有数据

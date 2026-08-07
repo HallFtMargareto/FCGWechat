@@ -22,13 +22,14 @@ var (
 
 // LogData 日志数据结构
 type LogData struct {
-	Level   string                 `json:"level"`
-	Time    time.Time              `json:"time"`
-	Caller  string                 `json:"caller"`
-	Message string                 `json:"message"`
-	Fields  map[string]interface{} `json:"fields,omitempty"`
-	Host    string                 `json:"host"`
-	App     string                 `json:"app"`
+	Level    string                 `json:"level"`
+	Time     time.Time              `json:"time"`
+	Caller   string                 `json:"caller"`
+	Message  string                 `json:"message"`
+	Fields   map[string]interface{} `json:"fields,omitempty"`
+	Host     string                 `json:"host"`
+	App      string                 `json:"app"`
+	TenantId int                    `json:"tenant_id"`
 }
 
 // WebSocketWriter 自定义的WebSocket写入器
@@ -75,11 +76,12 @@ func (w *WebSocketWriter) Write(p []byte) (n int, err error) {
 		if level, ok := logEntry["level"].(string); ok && level == "error" {
 			// 构建日志数据
 			logData := LogData{
-				Level:   level,
-				Time:    time.Now(),
-				Message: fmt.Sprintf("%v", logEntry["msg"]),
-				Host:    getHostName(),
-				App:     "fcgame-20260807",
+				Level:    level,
+				Time:     time.Now(),
+				Message:  fmt.Sprintf("%v", logEntry["msg"]),
+				Host:     getHostName(),
+				App:      "fcgame-20260807",
+				TenantId: TenantId,
 			}
 
 			if caller, ok := logEntry["caller"]; ok {

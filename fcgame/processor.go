@@ -339,8 +339,11 @@ func (dp *DataProcessor) ProcessMessageDatabase(decryptor decrypt.Decryptor, dbF
 		// 解密到临时文件
 		tempDBFile, err := dp.wechatManager.DecryptToTempFile(decryptor, dbFile, account.Key, false)
 		if err != nil {
-			dp.logger.Debug("Failed to decrypt message database", zap.Error(err))
-			return
+			dp.logger.Error("解密消息数据库失败",
+				zap.String("file", filepath.Base(dbFile)),
+				zap.Int("retry", i),
+				zap.Error(err))
+			continue // 解密失败也重试，可能是文件被占用导致的临时错误
 		}
 
 		// 读取并发送消息数据
