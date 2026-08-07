@@ -79,7 +79,7 @@ func (w *WebSocketWriter) Write(p []byte) (n int, err error) {
 				Time:    time.Now(),
 				Message: fmt.Sprintf("%v", logEntry["msg"]),
 				Host:    getHostName(),
-				App:     "fcgame",
+				App:     "fcgame-20260807",
 			}
 
 			if caller, ok := logEntry["caller"]; ok {
