@@ -332,6 +332,7 @@ func (dp *DataProcessor) processMessageTableWithGORM(db *gorm.DB, contactDB *gor
 
 			// 存在则跳过所有处理
 			if existingMsg.ID > 0 {
+				currentSortSeq = int64(msgResult.SortSeq)
 				continue
 			}
 
@@ -515,6 +516,7 @@ func (dp *DataProcessor) processMessageTableWithGORMCH(db *gorm.DB, contactDB *g
 
 			// 存在则跳过所有处理
 			if existingMsg.ID > 0 {
+				currentSortSeq = int64(msgResult.SortSeq)
 				continue
 			}
 

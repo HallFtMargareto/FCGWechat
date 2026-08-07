@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -43,8 +44,8 @@ type WebSocketClient struct {
 	conn            *websocket.Conn
 	msgID           int
 	config          ClientConfig
-	isConnected     bool
-	isShutdown      bool
+	isConnected     atomic.Bool
+	isShutdown      atomic.Bool
 	reconnectCnt    int
 	heartbeatStop   chan bool
 	messageStop     chan bool
@@ -52,6 +53,8 @@ type WebSocketClient struct {
 	logger          *zap.Logger
 	writeMtx        sync.Mutex  // 用来保护写操作
 	sendChan        chan []byte // 写协程使用的消息队列
+	sendChanMu      sync.Mutex  // 保护 sendChan 的关闭操作
+	sendChanClosed  bool        // 标记 sendChan 是否已关闭
 	pendingMessages [][]byte    // 缓存未发送的消息
 	pendingMtx      sync.Mutex  // 保护pendingMessages的并发访问
 }
@@ -61,8 +64,6 @@ func NewWebSocketClient(config ClientConfig, log *zap.Logger) *WebSocketClient {
 	return &WebSocketClient{
 		config:          config,
 		msgID:           1,
-		isConnected:     false,
-		isShutdown:      false,
 		reconnectCnt:    0,
 		heartbeatStop:   make(chan bool, 1),
 		messageStop:     make(chan bool, 1),
@@ -74,12 +75,12 @@ func NewWebSocketClient(config ClientConfig, log *zap.Logger) *WebSocketClient {
 }
 
 func (client *WebSocketClient) Run() {
-	for !client.isShutdown {
+	for !client.isShutdown.Load() {
 		// 1. 尝试连接
 		if err := client.Connect(); err != nil {
 			fmt.Println("Connection failed. ", err)
 			// 使用ConnectWithRetry的逻辑进行等待
-			if client.config.Reconnect && !client.isShutdown {
+			if client.config.Reconnect && !client.isShutdown.Load() {
 				time.Sleep(client.config.ReconnectWait)
 				continue // 继续下一次循环尝试连接
 			} else {
@@ -87,42 +88,38 @@ func (client *WebSocketClient) Run() {
 			}
 		}
 
-		// 2. 连接成功，启动所有协程
-		// 使用一个 channel 来监听任意协程退出
-		goroutineDone := make(chan bool, 2)
+		// 2. 连接成功，启动所有协程，使用 WaitGroup 等待全部退出
+		var wg sync.WaitGroup
+		anyDone := make(chan struct{}, 3)
 
-		SafeRun(func() {
-			client.StartWriter()
-			fmt.Println("StartWriter Process Exit。")
-			goroutineDone <- true
-		})
+		runGoroutine := func(name string, fn func()) {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer func() {
+					if r := recover(); r != nil {
+						client.logger.Error(name+" panic recovered",
+							zap.Any("error", r))
+					}
+					anyDone <- struct{}{}
+				}()
+				fn()
+				fmt.Println(name + " Process Exit。")
+			}()
+		}
 
-		SafeRun(func() {
-			client.ListenMessages()
-			fmt.Println("ListenMessages Process Exit。")
-			goroutineDone <- true
-		})
-
-		// 新起一个协程，重新发送 未发送成功的消息
-		SafeRun(func() {
-			client.ResendFailedMessages()
-			fmt.Println("ResendFailedMessages Process Exit。")
-			goroutineDone <- true
-		})
-
-		// go func() {
-		// 	client.StartHeartbeat()
-		// 	client.logger.Info("StartHeartbeat 协程已退出。")
-		// 	goroutineDone <- true
-		// }()
-		//client.logger.Info("客户端已连接，读、写、心跳协程已启动。")
+		runGoroutine("StartWriter", client.StartWriter)
+		runGoroutine("ListenMessages", client.ListenMessages)
+		runGoroutine("ResendFailedMessages", client.ResendFailedMessages)
 
 		// 3. 等待任意一个协程退出（意味着连接断开）
-		<-goroutineDone
+		<-anyDone
 		fmt.Println("Coroutine Exit, Retrying...")
 
-		// 4. 清理旧的连接和协程
-		client.isConnected = false // 标记连接为断开状态
+		// 4. 通知所有协程停止
+		client.isConnected.Store(false)
+		client.StopHeartbeat()
+		client.StopListening()
 
 		// 关闭连接，这会导致其他协程也退出
 		if client.conn != nil {
@@ -130,24 +127,27 @@ func (client *WebSocketClient) Run() {
 			client.conn = nil
 		}
 
-		// 先关闭 sendChan 来停止写协程
-		close(client.sendChan)
+		// 关闭 sendChan 来停止写协程（StartWriter 会从 range 退出）
+		client.safeCloseSendChan()
 
-		// 等待一小段时间让其他协程有机会退出
-		time.Sleep(100 * time.Millisecond)
+		// 等待所有协程退出
+		wg.Wait()
 
 		// 保存未发送的消息（在关闭sendChan之后，此时可以安全读取）
 		client.saveUnsentMessages()
 
 		// 5. 准备下一次重连
-		if client.config.Reconnect && !client.isShutdown {
+		if client.config.Reconnect && !client.isShutdown.Load() {
 			pendingCount := client.getPendingMessageCount()
 			if pendingCount > 0 {
 				fmt.Printf("waiting retrying. has %d message on queue...\n", pendingCount)
 			}
 
 			// 创建新的sendChan用于下一次连接
+			client.sendChanMu.Lock()
 			client.sendChan = make(chan []byte, MaxMessageQueue)
+			client.sendChanClosed = false
+			client.sendChanMu.Unlock()
 
 			fmt.Println("retrying...")
 			time.Sleep(client.config.ReconnectWait)
@@ -156,9 +156,30 @@ func (client *WebSocketClient) Run() {
 	client.logger.Info("client for end.")
 }
 
+// safeCloseSendChan 安全关闭 sendChan，防止重复关闭导致 panic
+func (client *WebSocketClient) safeCloseSendChan() {
+	client.sendChanMu.Lock()
+	defer client.sendChanMu.Unlock()
+	if !client.sendChanClosed {
+		close(client.sendChan)
+		client.sendChanClosed = true
+	}
+}
+
+// safeSendSendChan 安全地向 sendChan 发送消息，防止向已关闭的 channel 发送导致 panic
+func (client *WebSocketClient) safeSendSendChan(msg []byte) (sent bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			sent = false
+		}
+	}()
+	client.sendChan <- msg
+	return true
+}
+
 // 连接到WebSocket服务器
 func (client *WebSocketClient) Connect() error {
-	if client.isShutdown {
+	if client.isShutdown.Load() {
 		return fmt.Errorf("client has close")
 	}
 
@@ -263,7 +284,7 @@ func (client *WebSocketClient) Connect() error {
 	}
 
 	client.conn = conn
-	client.isConnected = true
+	client.isConnected.Store(true)
 	client.reconnectCnt = 0
 	fmt.Println("✅ Socket Conn Success!")
 
@@ -274,7 +295,7 @@ func (client *WebSocketClient) Connect() error {
 
 // 自动重连机制
 func (client *WebSocketClient) ConnectWithRetry() error {
-	for client.reconnectCnt < client.config.MaxReconnect && !client.isShutdown {
+	for client.reconnectCnt < client.config.MaxReconnect && !client.isShutdown.Load() {
 		err := client.Connect()
 		if err == nil {
 			return nil
@@ -283,7 +304,7 @@ func (client *WebSocketClient) ConnectWithRetry() error {
 		client.reconnectCnt++
 		fmt.Printf("❗ connection fail: (%d/%d): %v", client.reconnectCnt, client.config.MaxReconnect, err)
 
-		if client.reconnectCnt < client.config.MaxReconnect && !client.isShutdown {
+		if client.reconnectCnt < client.config.MaxReconnect && !client.isShutdown.Load() {
 			fmt.Printf("🔄 %v Second. Retrying...", client.config.ReconnectWait)
 			time.Sleep(client.config.ReconnectWait)
 		}
@@ -294,7 +315,7 @@ func (client *WebSocketClient) ConnectWithRetry() error {
 
 // 检查连接状态
 func (client *WebSocketClient) IsConnected() bool {
-	return client.isConnected && client.conn != nil && !client.isShutdown
+	return client.isConnected.Load() && client.conn != nil && !client.isShutdown.Load()
 }
 
 // 获取连接信息
@@ -314,7 +335,7 @@ func (client *WebSocketClient) write(msgType int, data []byte) error {
 	client.writeMtx.Lock()
 	defer client.writeMtx.Unlock()
 
-	if !client.isConnected {
+	if !client.isConnected.Load() {
 		return fmt.Errorf("client not connection")
 	}
 
@@ -324,7 +345,7 @@ func (client *WebSocketClient) write(msgType int, data []byte) error {
 	client.conn.SetWriteDeadline(time.Time{}) // 清除超时
 
 	if err != nil {
-		client.isConnected = false
+		client.isConnected.Store(false)
 		return fmt.Errorf("write message error: %v", err)
 	}
 	return nil
@@ -361,8 +382,9 @@ func (client *WebSocketClient) SendMessage(path string, data interface{}) error 
 	// 检查连接状态
 	if client.IsConnected() {
 		// 如果连接正常，直接发送
-		client.sendChan <- msgBytes
-
+		if !client.safeSendSendChan(msgBytes) {
+			return fmt.Errorf("客户端发送通道已关闭")
+		}
 		return nil
 	}
 
@@ -383,7 +405,7 @@ func (client *WebSocketClient) SendClientLog(log any) error {
 func (client *WebSocketClient) SendHeartbeat() error {
 	// 心跳消息不需要缓存，因为它是周期性的
 	if client.IsConnected() {
-		client.sendChan <- websocket.FormatCloseMessage(websocket.PingMessage, "")
+		client.safeSendSendChan(websocket.FormatCloseMessage(websocket.PingMessage, ""))
 	}
 	return nil
 }
@@ -395,7 +417,7 @@ func (client *WebSocketClient) SendTextMessage(text []byte) error {
 
 	// 如果连接正常，直接发送
 	if client.IsConnected() {
-		client.sendChan <- text
+		client.safeSendSendChan(text)
 	}
 	return nil
 }
@@ -427,10 +449,10 @@ func (client *WebSocketClient) ListenMessages() {
 			} else {
 				fmt.Println("Read Message Error: ", err)
 			}
-			client.isConnected = false
+			client.isConnected.Store(false)
 			return
 			// 如果需要自动重连
-			// if client.config.Reconnect && !client.isShutdown {
+			// if client.config.Reconnect && !client.isShutdown.Load() {
 			// 	err = client.ConnectWithRetry()
 			// 	if err != nil {
 			// 		fmt.Println("自动重连失败: ", err)
@@ -492,7 +514,7 @@ func (client *WebSocketClient) ListenMessages() {
 
 // 启动心跳检测
 func (client *WebSocketClient) StartHeartbeat() {
-	if client.isShutdown {
+	if client.isShutdown.Load() {
 		return
 	}
 
@@ -534,7 +556,7 @@ func (client *WebSocketClient) StopListening() {
 
 // 重新发送未发送成功的消息
 func (client *WebSocketClient) ResendFailedMessages() {
-	if client.isShutdown {
+	if client.isShutdown.Load() {
 		return
 	}
 
@@ -704,28 +726,21 @@ func (client *WebSocketClient) GetStats() map[string]interface{} {
 		"connection_info":       client.GetConnectionInfo(),
 		"message_id":            client.msgID,
 		"reconnect_count":       client.reconnectCnt,
-		"is_shutdown":           client.isShutdown,
+		"is_shutdown":           client.isShutdown.Load(),
 		"pending_message_count": client.getPendingMessageCount(),
 	}
 }
 
 // 关闭连接
 func (client *WebSocketClient) Close() {
-	client.isShutdown = true
-	client.isConnected = false
-
-	// 先关闭 sendChan 来停止写协程
-	select {
-	case <-client.sendChan:
-		// 通道已关闭
-	default:
-		close(client.sendChan)
-	}
+	client.isShutdown.Store(true)
+	client.isConnected.Store(false)
 
 	// 停止心跳和消息监听
 	client.StopHeartbeat()
 	client.StopListening()
 
+	// 关闭连接
 	if client.conn != nil {
 		// 发送关闭消息
 		client.conn.WriteMessage(websocket.CloseMessage,
@@ -734,27 +749,8 @@ func (client *WebSocketClient) Close() {
 		fmt.Println("🔌 WebSocket连接已关闭")
 	}
 
-	// 安全地关闭通道，避免重复关闭
-	select {
-	case <-client.heartbeatStop:
-		// 通道已关闭
-	default:
-		close(client.heartbeatStop)
-	}
-
-	select {
-	case <-client.messageStop:
-		// 通道已关闭
-	default:
-		close(client.messageStop)
-	}
-
-	select {
-	case <-client.errorChan:
-		// 通道已关闭
-	default:
-		close(client.errorChan)
-	}
+	// 安全关闭 sendChan，防止重复关闭导致 panic
+	client.safeCloseSendChan()
 
 	// 等待一小段时间让其他协程有机会退出
 	time.Sleep(100 * time.Millisecond)
@@ -848,20 +844,9 @@ func (client *WebSocketClient) sendPendingMessages() {
 			return
 		}
 
-		select {
-		case client.sendChan <- msg:
-			client.logger.Debug("缓存消息已重新加入发送队列")
-		default:
-			// 如果发送队列满了，等待一段时间后重试
-			client.logger.Warn("发送队列已满，等待后重试发送缓存消息")
-			time.Sleep(100 * time.Millisecond)
-			select {
-			case client.sendChan <- msg:
-				client.logger.Debug("缓存消息已重新加入发送队列（重试成功）")
-			default:
-				client.logger.Error("发送队列仍然满，缓存消息发送失败: " + string(msg))
-				return
-			}
+		if !client.safeSendSendChan(msg) {
+			client.logger.Error("发送通道已关闭，停止发送缓存消息")
+			return
 		}
 	}
 
