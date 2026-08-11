@@ -436,7 +436,7 @@ func (client *WebSocketClient) ListenMessages() {
 
 	// 设置 PongHandler
 	client.conn.SetPongHandler(func(appData string) error {
-		fmt.Println("接收服务器PING包:", time.Now().Unix())
+		// fmt.Println("接收服务器PING包:", time.Now().Unix())
 		client.conn.SetReadDeadline(time.Now().Add(ReadTimeout))
 		return nil
 	})

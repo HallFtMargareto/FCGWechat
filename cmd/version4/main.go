@@ -28,7 +28,7 @@ func main() {
 
 	wechatManager := fcgame.NewWechatManager()
 	// tempDBFile, err := wechatManager.DecryptToTempFile(decryptor, "D:\\CryptDrive\\chatlog-main\\cmd\\version4\\message_0-5.db", key, false)
-	tempDBFile, err := wechatManager.DecryptToTempFile(decryptor, "S:\\Project\\chatlog-main\\cust\\xbs\\message\\message_0.db", key, false)
+	tempDBFile, err := wechatManager.DecryptToTempFile(decryptor, "S:\\Project\\chatlog-main\\cust\\message\\message_0.db", key, false)
 
 	// tempDBFile, err := wechatManager.DecryptToTempFile(decryptor, "D:\\CryptDrive\\chatlog-main\\cmd\\version4\\list\\wxid_0f32w7u1lmox22_3011\\db_storage\\contact\\contact.db", key, false)
 
