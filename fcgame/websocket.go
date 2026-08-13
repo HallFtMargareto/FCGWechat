@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,12 +51,20 @@ type WebSocketClient struct {
 	messageStop     chan bool
 	errorChan       chan error
 	logger          *zap.Logger
-	writeMtx        sync.Mutex  // 用来保护写操作
-	sendChan        chan []byte // 写协程使用的消息队列
-	sendChanMu      sync.Mutex  // 保护 sendChan 的关闭操作
-	sendChanClosed  bool        // 标记 sendChan 是否已关闭
-	pendingMessages [][]byte    // 缓存未发送的消息
-	pendingMtx      sync.Mutex  // 保护pendingMessages的并发访问
+	writeMtx        sync.Mutex             // 用来保护写操作
+	sendChan        chan []byte            // 写协程使用的消息队列
+	sendChanMu      sync.Mutex             // 保护 sendChan 的关闭操作
+	sendChanClosed  bool                   // 标记 sendChan 是否已关闭
+	pendingMessages [][]byte               // 缓存未发送的消息
+	pendingMtx      sync.Mutex             // 保护pendingMessages的并发访问
+	updateChan      chan messageUpdateTask // 串行更新消息发送状态的队列
+}
+
+// messageUpdateTask 消息发送状态更新任务
+type messageUpdateTask struct {
+	hash      string
+	localId   uint64
+	localType uint64
 }
 
 // 创建新的WebSocket客户端
@@ -70,8 +77,9 @@ func NewWebSocketClient(config ClientConfig, log *zap.Logger) *WebSocketClient {
 		messageStop:     make(chan bool, 1),
 		errorChan:       make(chan error, 10),
 		logger:          log,
-		sendChan:        make(chan []byte, MaxMessageQueue), // 缓冲区可调
-		pendingMessages: make([][]byte, 0),                  // 初始化消息缓存
+		sendChan:        make(chan []byte, MaxMessageQueue),  // 缓冲区可调
+		pendingMessages: make([][]byte, 0),                   // 初始化消息缓存
+		updateChan:      make(chan messageUpdateTask, 10000), // 串行更新队列
 	}
 }
 
@@ -113,6 +121,7 @@ func (client *WebSocketClient) Run() {
 		runGoroutine("StartHeartbeat", client.StartHeartbeat)
 		runGoroutine("ListenMessages", client.ListenMessages)
 		runGoroutine("ResendFailedMessages", client.ResendFailedMessages)
+		runGoroutine("StartUpdateWorker", client.StartUpdateWorker)
 
 		// 3. 等待任意一个协程退出（意味着连接断开）
 		<-anyDone
@@ -427,6 +436,38 @@ func (client *WebSocketClient) SendTextMessage(text []byte) error {
 	return nil
 }
 
+// StartUpdateWorker 串行处理消息发送状态更新，避免并发写 SQLite
+func (client *WebSocketClient) StartUpdateWorker() {
+	for {
+		select {
+		case task := <-client.updateChan:
+			messageDB, err := GetMessageGormDB()
+			if err != nil {
+				client.logger.Error("更新Worker获取数据库失败",
+					zap.String("hash", task.hash), zap.Uint64("local_id", task.localId), zap.Error(err))
+				continue
+			}
+
+			var updateErr error
+			if task.localType == 10000 {
+				updateErr = messageDB.Model(&FcgMessageLike{}).
+					Where("hash = ? AND local_id = ?", task.hash, task.localId).
+					Update("send_status", 1).Error
+			} else {
+				updateErr = messageDB.Model(&FcgMessageModel{}).
+					Where("hash = ? AND local_id = ?", task.hash, task.localId).
+					Update("send_status", 1).Error
+			}
+			if updateErr != nil {
+				client.logger.Error("更新消息发送状态失败",
+					zap.String("hash", task.hash), zap.Uint64("local_id", task.localId), zap.Error(updateErr))
+			}
+		case <-client.messageStop:
+			return
+		}
+	}
+}
+
 // 监听服务器消息
 func (client *WebSocketClient) ListenMessages() {
 
@@ -483,38 +524,13 @@ func (client *WebSocketClient) ListenMessages() {
 					if hashOk && idOk {
 						localId := uint64(localIdFloat)
 						localIdTypeID := uint64(localIdType)
-						// 异步更新数据库状态
-						go func(h string, id uint64, lidType uint64) {
-							defer func() {
-								if r := recover(); r != nil {
-									client.logger.Error("更新消息发送状态panic",
-										zap.Any("error", r),
-										zap.String("stack", string(debug.Stack())))
-								}
-							}()
-
-							messageDB, err := GetMessageGormDB()
-							if err != nil {
-								client.logger.Error("更新消息发送状态获取数据库失败",
-									zap.String("hash", h), zap.Uint64("local_id", id), zap.Error(err))
-								return
-							}
-
-							var updateErr error
-							if lidType == 10000 {
-								updateErr = messageDB.Model(&FcgMessageLike{}).
-									Where("hash = ? AND local_id = ?", h, id).
-									Update("send_status", 1).Error
-							} else {
-								updateErr = messageDB.Model(&FcgMessageModel{}).
-									Where("hash = ? AND local_id = ?", h, id).
-									Update("send_status", 1).Error
-							}
-							if updateErr != nil {
-								client.logger.Error("更新消息发送状态失败",
-									zap.String("hash", h), zap.Uint64("local_id", id), zap.Error(updateErr))
-							}
-						}(hash, localId, localIdTypeID)
+						// 发送到串行更新队列，避免并发写 SQLite
+						select {
+						case client.updateChan <- messageUpdateTask{hash: hash, localId: localId, localType: localIdTypeID}:
+						default:
+							client.logger.Warn("更新队列已满，丢弃更新",
+								zap.String("hash", hash), zap.Uint64("local_id", localId))
+						}
 					}
 				}
 			}
