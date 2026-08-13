@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -11,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/minio/selfupdate"
 	"github.com/sjzar/chatlog/fcgame"
 	"go.uber.org/zap"
 )
@@ -41,9 +43,12 @@ func main() {
 		return
 	}
 
+	//检查新版本
+	fcgame.RefreshServerInfo()
+	doUpdate()
+
 	// 运行解密发送任务
 	manager.Run()
-	fcgame.SafeRun(fcgame.RefreshServerInfo)
 
 	time.Sleep(time.Second)
 	scanner := bufio.NewScanner(os.Stdin)
@@ -57,6 +62,7 @@ func main() {
 		if text == "" {
 			continue
 		}
+
 		if text == "exit" {
 			fmt.Println("程序结束")
 			break
@@ -71,4 +77,37 @@ func Wait() {
 	signal.Notify(exit, syscall.SIGINT, syscall.SIGTERM) //notify方法用来监听收到的信号
 	sig := <-exit
 	fmt.Printf("receive signal: %s, submit program exit.", sig.String())
+}
+
+func doUpdate() error {
+	if fcgame.SInfo.Version == fcgame.Version {
+		return nil
+	}
+	fmt.Println("正在更新客户端,请勿关闭程序...")
+	resp, err := http.Get(strings.TrimSpace(fcgame.SInfo.Download))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	fmt.Println("Status-Code:", resp.StatusCode)
+	fmt.Println("Content-Length:", resp.Header.Get("Content-Length"))
+	fmt.Println("Content-Type:", resp.Header.Get("Content-Type"))
+
+	if resp.StatusCode != 200 {
+		fcgame.Logger.Error("更新失败", zap.Any("info", fcgame.SInfo))
+		fmt.Println("更新失败")
+		return nil
+	}
+
+	err = selfupdate.Apply(resp.Body, selfupdate.Options{})
+	if err != nil {
+		fcgame.Logger.Error("update fail", zap.Error(err))
+		fmt.Println("update fail: ", err)
+		return err
+	}
+
+	// fmt.Println("已更新版本：", fcgame.Version)
+	fmt.Println("更新成功，请重新打开程序")
+	return nil
 }

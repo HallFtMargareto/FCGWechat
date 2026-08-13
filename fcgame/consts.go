@@ -66,7 +66,7 @@ type Config struct {
 
 var (
 	//初始版本号
-	Version = 101
+	Version = 100
 
 	DomainRZ = true
 
@@ -77,6 +77,8 @@ var (
 
 	// 全局配置实例
 	AppConfig *Config
+
+	SInfo ServerInfo
 )
 
 // LoadConfig 从配置文件加载配置
@@ -98,6 +100,8 @@ func LoadConfig(configPath string) error {
 			return err
 		}
 	}
+
+	SInfo = ServerInfo{}
 
 	// 应用配置到全局变量
 	applyConfig()

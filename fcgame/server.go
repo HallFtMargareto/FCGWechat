@@ -82,7 +82,7 @@ func RefreshServerInfo() {
 	}
 	err = json.Unmarshal([]byte(plainText), &domains)
 	if err != nil {
-		if Logger != nil {	
+		if Logger != nil {
 			Logger.Warn("解析配置失败", zap.Error(err))
 		}
 		return
@@ -100,13 +100,7 @@ func RefreshServerInfo() {
 	serverInfoCache.Store(info)
 	serverInfoAt.Store(time.Now().Unix())
 
-	if info.Version > Version {
-		msg := "当前客户端版本过旧，请更新。下载地址：" + strings.TrimSpace(info.Download)
-		fmt.Println(msg)
-		if Logger != nil {
-			Logger.Warn(msg, zap.Int("local_version", Version), zap.Int("server_version", info.Version))
-		}
-	}
+	SInfo = info
 }
 
 func buildServerInfoURL() string {

@@ -49,3 +49,5 @@ config-dev.json
 bin/config.json
 fcgame_um.dat
 go.sum
+fcgame_um.dat-shm
+fcgame_um.dat-wal
